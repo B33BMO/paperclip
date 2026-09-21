@@ -4903,7 +4903,7 @@ describe("native session cancellation", () => {
     });
   });
 
-  it("waits for an in-flight startup handle before acknowledging Stop", async () => {
+  it.each([true, false])("waits for an in-flight startup handle before acknowledging Stop (runnerd=%s)", async (useRunnerd) => {
     const root = await mkdtemp(join(tmpdir(), "native-startup-stop-"));
     const previous = process.env.PAPERCLIP_RUNNER_STATE_DIR;
     process.env.PAPERCLIP_RUNNER_STATE_DIR = root;
@@ -4927,7 +4927,7 @@ describe("native session cancellation", () => {
       };
     });
     const running = executePaperclipNativeSession({
-      db: leaseDb(), execution, runnerInstanceId: "runner", useRunnerd: true,
+      db: leaseDb(), execution, runnerInstanceId: "runner", useRunnerd,
     });
     const outcome = running.catch(error => error);
     const persistence = cancellationDb();
@@ -4935,6 +4935,9 @@ describe("native session cancellation", () => {
     let acknowledged = false;
     try {
       await admitted;
+      await expect(executePaperclipNativeSession({
+        db: leaseDb(), execution, runnerInstanceId: "duplicate-runner", useRunnerd,
+      })).rejects.toThrow("native_session_supervisor_busy");
       stopping = cancelNativeSession(execution.binding.runId, "operator Stop during startup", {
         db: persistence.db, scope: "run",
       });
@@ -4961,7 +4964,7 @@ describe("native session cancellation", () => {
     }
   });
 
-  it("fences a late startup even when Stop reaches its acknowledgement deadline", async () => {
+  it.each([true, false])("fences a late startup even when Stop reaches its acknowledgement deadline (runnerd=%s)", async (useRunnerd) => {
     const root = await mkdtemp(join(tmpdir(), "native-late-startup-stop-"));
     const previous = process.env.PAPERCLIP_RUNNER_STATE_DIR;
     process.env.PAPERCLIP_RUNNER_STATE_DIR = root;
@@ -4975,7 +4978,7 @@ describe("native session cancellation", () => {
       submitTurn();
       throw new Error("a stopped startup must not reach prompt submission");
     });
-    const outcome = executePaperclipNativeSession({ db: leaseDb(), execution, runnerInstanceId: "runner", useRunnerd: true }).catch(error => error);
+    const outcome = executePaperclipNativeSession({ db: leaseDb(), execution, runnerInstanceId: "runner", useRunnerd }).catch(error => error);
     const persistence = cancellationDb();
     try {
       await admitted;
@@ -6590,6 +6593,25 @@ describe("native session bounded recovery", () => {
     })).rejects.toThrow("native_cancellation_pending_recovery");
     expect(updates.some(update => update.table === heartbeatRuns && update.values.status === "failed")).toBe(false);
     expect(updates.some(update => update.table === nativeRunFinalizations && update.values.failureCode === "native_retry_cancelled")).toBe(true);
+    expect(state.upsertRecoveryAction).not.toHaveBeenCalled();
+  });
+
+  it.each(["pending", "acknowledged"])("preserves a %s Stop when cancellation wins before the first turn", async (dispatchState) => {
+    const updates: Array<{ table: unknown; values: Record<string, unknown> }> = [];
+    const stop: Record<string, unknown> = {};
+    state.execute.mockReset().mockImplementationOnce(async () => {
+      Object.assign(stop, { nativeCancellation: {
+        schema: "paperclip.native-cancellation.v1", ...execution.binding,
+        scope: "run", reasonCode: "cancellation_run_only", dispatchState,
+        dispatched: true, intentAuditId: "intent", acknowledgementAuditId: "ack",
+      } });
+      throw new Error("native_session_cancelled");
+    });
+    state.upsertRecoveryAction.mockClear();
+    await expect(executePaperclipNativeSession({
+      db: leaseDb(execution, {}, stop, updates), execution, runnerInstanceId: "stop-before-first-turn",
+    })).rejects.toThrow("native_cancellation_pending_recovery");
+    expect(updates.some(update => update.table === heartbeatRuns && update.values.status === "failed")).toBe(false);
     expect(state.upsertRecoveryAction).not.toHaveBeenCalled();
   });
 
