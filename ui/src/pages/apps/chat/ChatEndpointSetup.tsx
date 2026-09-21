@@ -1,4 +1,6 @@
 import { defaultSlackAppName, slackBotNameForAgent } from "./slack-app-name";
+import { GitHubChatSetup } from "./GitHubChatSetup";
+import { GitHubAgentTrustWarning } from "@/components/GitHubAgentTrustWarning";
 import { SetupWizardFooter } from "@/components/SetupWizard";
 import { ChatSetupNavigation } from "@/components/chat/ChatSetupNavigation";
 import { SlackAvatarStep } from "./SlackAvatarStep";
@@ -101,10 +103,71 @@ export function isChatEndpointRepairing(
   );
 }
 
+function ChatConnectionPurpose({ provider, onChat, onTools }: {
+  provider: ChatProvider;
+  onChat: () => void;
+  onTools: () => void;
+}) {
+  const { setBreadcrumbs } = useBreadcrumbs();
+  useEffect(() => {
+    setBreadcrumbs([{ label: "Connectors", href: "/apps" }, { label: "Choose connection" }]);
+    return () => setBreadcrumbs([]);
+  }, [setBreadcrumbs]);
+  return (
+      <div className="max-w-2xl space-y-6">
+        <ChatSetupNavigation labels={provider === "slack" ? ["Choose agent", "Create Slack app", "Add credentials", "Verify Slack connection", "Add avatar", "Connect your Slack account", "Try it"] : undefined} step={0} availableStep={0} onSelect={onChat} />
+        <div>
+          <h1 className="text-xl font-bold">Choose how to connect</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            What should this {providerNames[provider]} connection do?
+          </p>
+        </div>
+        <div className="grid gap-3">
+          <button
+            type="button"
+            className="rounded-xl border border-border p-4 text-left hover:bg-accent/40"
+            onClick={onChat}
+          >
+            <span className="block text-sm font-semibold">
+              Chat with an agent
+            </span>
+            <span className="mt-1 block text-sm text-muted-foreground">
+              People in {providerNames[provider]} can start and continue
+              Paperclip tasks.
+            </span>
+          </button>
+          <button
+            type="button"
+            className="rounded-xl border border-border p-4 text-left hover:bg-accent/40"
+            onClick={onTools}
+          >
+            <span className="block text-sm font-semibold">
+              Use this connection as an agent tool
+            </span>
+            <span className="mt-1 block text-sm text-muted-foreground">
+              Let agents use {providerNames[provider]} actions and data while
+              they work.
+            </span>
+          </button>
+        </div>
+      </div>
+  );
+}
+
 export function ChatEndpointSetup() {
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
+  if (params.get("provider") === "github") {
+    if (params.get("purpose") === "chat" || params.get("resume")) return <GitHubChatSetup />;
+    return <ChatConnectionPurpose provider="github" onChat={() => {
+      const next = new URLSearchParams(params);
+      next.set("purpose", "chat");
+      setParams(next);
+    }} onTools={() => navigate(params.get("toolHref") || "/apps/connect?source=github")} />;
+  }
   return params.get("provider") === "agentmail" ? <EmailEndpointSetup /> : <ChatSdkEndpointSetup />;
 }
+
 function ChatSdkEndpointSetup() {
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
@@ -408,45 +471,7 @@ function ChatSdkEndpointSetup() {
     );
 
   if (purpose === "choice") {
-    return (
-      <div className="max-w-2xl space-y-6">
-        <ChatSetupNavigation labels={provider === "slack" ? ["Choose agent", "Create Slack app", "Add credentials", "Verify Slack connection", "Add avatar", "Connect your Slack account", "Try it"] : undefined} step={0} availableStep={0} onSelect={() => setPurpose("chat")} />
-        <div>
-          <h1 className="text-xl font-bold">Choose how to connect</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            What should this {providerNames[provider]} connection do?
-          </p>
-        </div>
-        <div className="grid gap-3">
-          <button
-            type="button"
-            className="rounded-xl border border-border p-4 text-left hover:bg-accent/40"
-            onClick={() => setPurpose("chat")}
-          >
-            <span className="block text-sm font-semibold">
-              Chat with an agent
-            </span>
-            <span className="mt-1 block text-sm text-muted-foreground">
-              People in {providerNames[provider]} can start and continue
-              Paperclip tasks.
-            </span>
-          </button>
-          <button
-            type="button"
-            className="rounded-xl border border-border p-4 text-left hover:bg-accent/40"
-            onClick={() => navigate(toolHref)}
-          >
-            <span className="block text-sm font-semibold">
-              Use this connection as an agent tool
-            </span>
-            <span className="mt-1 block text-sm text-muted-foreground">
-              Let agents use {providerNames[provider]} actions and data while
-              they work.
-            </span>
-          </button>
-        </div>
-      </div>
-    );
+    return <ChatConnectionPurpose provider={provider} onChat={() => setPurpose("chat")} onTools={() => navigate(toolHref)} />;
   }
 
   const selectedAgent = agentsQuery.data?.find((agent) => agent.id === agentId);
@@ -480,6 +505,7 @@ function ChatSdkEndpointSetup() {
               placeholder="Choose an active agent"
               emptyMessage="No active agents are available."
             />}
+            {provider === "github" && <GitHubAgentTrustWarning agent={selectedAgent} />}
             <SetupWizardFooter onSaveExit={() => navigate("/apps")}>
               <Button
                 disabled={!agentId || createEndpoint.isPending}
