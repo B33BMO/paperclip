@@ -251,7 +251,7 @@ Missing provider credentials fail paid preflight and are not passing coverage.
 The default `--all` selection is 171 cells (148 local and 23 Daytona) and 371
 expected paid agent turns. The explicit-only everyday suite adds 38 catalog cells
 and chat hardening adds 18; chat stories adds six. All three are excluded from
-`--all`. The full catalog has 233 cells.
+`--all`. The full catalog has 239 cells.
 Follow-up steps remain ordered within their cell; all other
 cells are independent. Narrow selectors are strongly recommended while
 developing fixtures.
@@ -886,3 +886,54 @@ fetched snapshots does not trigger this rejection. Successful work alone does
 not prove that this recovery path was tested.
 
 The native `agent-chat.create-backlog` case saves a plan and assigned backlog task, then asks for its status. It checks the original creation audit, absence of all task runs, plan persistence, and exactly one task, so creating runnable work and correcting its status afterward fails the eval.
+
+### Remaining native Agent Chat qualification
+
+`agent-chat-qualification` is an explicit-only, local suite with six cells:
+`active-reassignment`, `worker-crash-retry`, and `grounded-answer-quality`, each
+on native Codex and native Claude. Run with
+`pnpm test:e2e:runner -- --suite agent-chat-qualification`.
+
+Active reassignment waits for a real worker to save a draft and enter a bounded
+file wait. The lead then transfers the same task through Agent Chat. The oracle
+requires cancellation with `issue_reassigned`, no overlap with the successor,
+one successor run, unchanged scope and plan, retained draft, and a completed
+successor-owned document. It budgets three provider runs.
+
+Worker recovery requires Linux with Python pidfd support (as on the CI workers).
+It kills only the exact running native worker PID from the public
+run record, after verifying its command-line run ID, process start identity, and isolated
+local workspace. The signal uses an owned pidfd so PID reuse cannot retarget it. The real UI must show one Retry button. Clicking it must produce one
+successful attempt, consume the original message once, preserve the saved plan,
+and return a reference that was supplied only after the crash. This qualifies
+**user-initiated Retry after worker process loss**, not automatic recovery of
+arbitrary provider failures. It budgets two provider runs. Unexpected failures
+remain fatal; only the positively identified injected-fault run is exempted.
+
+Answer quality uses two read-only turns over public fixture tasks and conflicting
+historical comments. Exact structured propositions grade current blockers,
+backlog versus active work, stale claims, and unknown facts. The written answers
+and source records are retained for separate semantic review of factual grounding,
+correction, uncertainty, usefulness, and clarity. Deterministic facts do not certify
+all prose quality. This case explicitly enables the existing experimental API
+context tools; the two recovery cases use the default native tool surface.
+
+All cells have a 15-minute deadline. Evidence includes boundary and final run
+records, documents, source facts, chat comments, and screenshots. Gates are
+released on failure and normal isolated-instance cleanup removes the workspace.
+The usual provider billing and partial-attempt reporting apply. No production
+prompts, onboarding defaults, or provider permissions are changed.
+
+For pre-default native onboarding qualification, select all `first-task` cases
+with profiles `runner-codex,runner-acpx-claude` (26 cells). The existing public-API
+runtime switch occurs after the real wizard creates its first agent and before
+any provider work. It preserves the wizard's model, persona, skills, and task.
+This tests the native first-task process in advance of the UI/default rollout;
+it does not certify a native option in the wizard, which is not offered yet.
+
+Current proof and remaining decisions are recorded in
+[the 21 September qualification report](QUALIFICATION-2026-09-21.md). In particular,
+worker loss currently quarantines both providers. The crash eval retains a red
+qualification result when no usable recovery exists, while also verifying that
+quarantine preserves the plan and rejects a misleading generic Retry. A passing
+quarantine guard is not a recovered workflow.

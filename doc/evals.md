@@ -224,3 +224,11 @@ without that record, the helper will refuse to overwrite an existing prefix.
 Verify the public page and its links after publication. This manual refresh
 does not add a scheduled workflow. Preserve the measurement date when choosing
 a newer rendering of the same campaign.
+
+Remaining native chat boundaries are in the explicit-only
+`agent-chat-qualification` suite: active task reassignment, user Retry after
+verified worker process loss, and multi-turn answers grounded in actual task
+records. See the [workflow and qualification limits](../tests/runner-e2e/README.md#remaining-native-agent-chat-qualification).
+The 26 native `first-task` cells exercise onboarding before native selection
+becomes the UI default. Live results and semantic answer reviews must accompany
+any qualification claim; catalog presence alone is not a pass.

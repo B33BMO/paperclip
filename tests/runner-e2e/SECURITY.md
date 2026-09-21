@@ -239,3 +239,16 @@ Rotate the affected credential immediately if a secret-scanning failure or
 unexpected public object is observed. Preserve the access-controlled Actions
 artifact and S3 object versions for incident analysis; do not weaken scanning
 to make a campaign publish.
+
+`agent-chat-qualification.worker-crash-retry` is local-only and explicit-only.
+Linux with Python pidfd support is required; unsupported hosts fail before signalling.
+The fault target comes from the public run detail, must be native and running,
+and must have an exact `--run-id` command argument. PID 1, the harness PID,
+noninteger PIDs, remote profiles, and mismatched identities are refused. The
+fixture workspace must be within the disposable instance root. The helper pins an owned pidfd, verifies the exact run argument and recorded
+process start ticks again after evidence capture, and signals through that handle.
+PID reuse cannot redirect the signal. This is one
+specific process signal, never a name-based or machine-wide process kill.
+The bounded fixture command is released even on failure; normal instance cleanup
+still owns all disposable processes and files. No credentials enter the prompt,
+fault metadata, or structured grading fixtures.

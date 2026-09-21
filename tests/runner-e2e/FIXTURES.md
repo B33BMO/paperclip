@@ -207,3 +207,11 @@ must recover a brief reference absent from both prompts; the revision oracle
 also reads the actual conversation plan. Fixture setup never enables native API
 tools for this suite. Do not describe its prepared-agent settings case as a
 production onboarding qualification.
+
+The `agent-chat-qualification` local fixtures use public APIs to seed two workers
+and a task with a saved plan, or read-only tasks with contradictory historical
+comments. Ordinary Node file waits in the isolated agent workspace establish
+observable active execution; no provider output or database outcome is fabricated.
+A worker-crash case sends SIGKILL only to a positively identified running native
+worker PID, then uses the production Retry button. Each gate is released in a
+finally block. Source facts and boundary state are retained with the attempt.

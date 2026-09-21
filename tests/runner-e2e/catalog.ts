@@ -2,7 +2,7 @@ import { continuationTasks } from "./continuation-cases.js";
 import { everydayTasks, productionStoryProfile } from "./everyday-cases.js";
 
 import { firstTaskTasks } from "./first-task-cases.js";
-import { chatTasks, chatHardeningTasks, chatStoryTasks } from "./chat-cases.js";
+import { chatTasks, chatHardeningTasks, chatStoryTasks, chatQualificationTasks } from "./chat-cases.js";
 import { createHash } from "node:crypto";
 import { createAgentSchema } from "../../packages/shared/src/validators/agent.js";
 import { createEnvironmentSchema } from "../../packages/shared/src/validators/environment.js";
@@ -967,6 +967,15 @@ export const runnerSuites: readonly RunnerSuiteFixture[] = [
       .map(profile => productionStoryProfile(defaultPermissionProfile(profile))),
     environments: [localEnvironment], tasks: chatStoryTasks, expectedMatrixSize: 6,
     definitionMetadata: { version: 3, setup: "configured-native-agent", permissions: "production-defaults", interruptionBoundary: "provider-file-wait-in-agent-workspace", grading: "persisted-comments-and-plan-run-attributed", scheduling: "explicit-only" },
+  },
+  {
+    id: "agent-chat-qualification", label: "Agent Chat Remaining Qualification", manualOnly: true,
+    description: "Active ownership transfer, user recovery after worker loss, and grounded answer quality.",
+    groups: ["chat", "native"],
+    profiles: runnerProfiles.filter(profile => ["runner-codex", "runner-acpx-claude"].includes(profile.id))
+      .map(profile => productionStoryProfile(defaultPermissionProfile(profile))),
+    environments: [localEnvironment], tasks: chatQualificationTasks, expectedMatrixSize: 6,
+    definitionMetadata: { version: 6, permissions: "production-defaults", instructions: "production", crashBoundary: "verified-native-worker-pid-at-file-wait", recovery: "user-visible-retry", answerGrading: "exact-grounded-propositions-plus-separate-semantic-review", scheduling: "explicit-only" },
   },
   ...(process.env.PAPERCLIP_RUNNER_E2E_CONNECTION_REVIEWS === "1" ? [connectionReviewSuite] : []),
   {

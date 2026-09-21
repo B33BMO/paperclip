@@ -5778,6 +5778,11 @@ export function agentRoutes(
       if (!["failed", "timed_out"].includes(failedRun.status)) {
         throw conflict("Only a failed run can be retried.");
       }
+      if (failedRun.runtimeMode === "native" && failedRun.errorCode === "native_session_cleanup_quarantined") {
+        throw conflict("The stopped native session requires cleanup and reconciliation before a new attempt.", {
+          code: "native_session_cleanup_quarantined",
+        });
+      }
       const failedContext = asRecord(failedRun.contextSnapshot) ?? {};
       const issueId =
         typeof failedContext.issueId === "string"
