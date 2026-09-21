@@ -2,7 +2,7 @@ import { continuationTasks } from "./continuation-cases.js";
 import { everydayTasks, productionStoryProfile } from "./everyday-cases.js";
 
 import { firstTaskTasks } from "./first-task-cases.js";
-import { chatTasks, chatHardeningTasks } from "./chat-cases.js";
+import { chatTasks, chatHardeningTasks, chatStoryTasks } from "./chat-cases.js";
 import { createHash } from "node:crypto";
 import { createAgentSchema } from "../../packages/shared/src/validators/agent.js";
 import { createEnvironmentSchema } from "../../packages/shared/src/validators/environment.js";
@@ -959,6 +959,15 @@ export const runnerSuites: readonly RunnerSuiteFixture[] = [
       ["stop-startup-new-resume", "hire-delegate-reuse", "blocked-status-review"].map(task => `agent-chat-hardening.${profile}.daytona.${task}`)),
     definitionMetadata: { version: 5, permissions: "production-defaults", instructions: "production", grading: "durable-state-and-source-evidence", scheduling: "explicit-only", restartMemory: "required-after-restart", statusEvidence: "structured-current-blocker-and-active-run-count", readOnlyState: "public-mutation-contract-and-relations", hiringReference: "neutral-document-reference-line" },
   },
+  {
+    id: "agent-chat-stories", label: "Agent Chat Setup and Interruptions", manualOnly: true,
+    description: "Experimental settings lifecycle and user follow-ups during active native work.",
+    groups: ["chat", "native"],
+    profiles: runnerProfiles.filter(profile => ["runner-codex", "runner-acpx-claude"].includes(profile.id))
+      .map(profile => productionStoryProfile(defaultPermissionProfile(profile))),
+    environments: [localEnvironment], tasks: chatStoryTasks, expectedMatrixSize: 6,
+    definitionMetadata: { version: 3, setup: "configured-native-agent", permissions: "production-defaults", interruptionBoundary: "provider-file-wait-in-agent-workspace", grading: "persisted-comments-and-plan-run-attributed", scheduling: "explicit-only" },
+  },
   ...(process.env.PAPERCLIP_RUNNER_E2E_CONNECTION_REVIEWS === "1" ? [connectionReviewSuite] : []),
   {
     id: "core-compatibility",
@@ -1033,6 +1042,7 @@ export function suiteDefinitionHash(suite: RunnerSuiteFixture) {
           id: task.id,
           flow: task.flow,
           expectedRunCount: task.expectedRunCount,
+          ...(task.minimumExpectedRunCount === undefined ? {} : { minimumExpectedRunCount: task.minimumExpectedRunCount }),
           restartServerBeforeQuestionAnswer:
             task.restartServerBeforeQuestionAnswer ?? false,
         })),

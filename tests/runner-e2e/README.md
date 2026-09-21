@@ -83,7 +83,7 @@ pnpm test:e2e:runner -- --suite daytona-warm-continuity
 pnpm test:e2e:runner -- --all
 ```
 
-The catalog contains eight suites, including the explicit-only everyday suite. `core-compatibility` (**Core Runner
+The catalog contains nine suites, including the explicit-only suites. `core-compatibility` (**Core Runner
 Compatibility**) is seven major runner profiles × local/Daytona × three
 workflows: 42 cells. Its cases are:
 
@@ -176,6 +176,9 @@ fails the case instead of silently testing another phase.
 Restart continuity requires the agent to recall a phrase after the server
 restarts. The final prompt does not reveal that phrase. A generic successful
 reply after restart cannot pass this check.
+The browser leaves the old development client before the server stops, then
+opens the canonical chat route and waits for the composer. This avoids racing
+Vite's automatic reconnect navigation against the test's explicit navigation.
 
 The blocker query requests a JSON status snapshot. It must name the current
 recorded blocker and report zero active runs independently of the task's blocked
@@ -187,6 +190,29 @@ Paperclip, and replays the exact public request with the original client request
 requires the original comment, task, plan, and single consuming run. This proves
 HTTP request idempotency across restart, not replay safety for an ambiguous
 provider tool response. Existing native tool-receipt tests cover that boundary.
+
+`agent-chat-stories` adds six explicit-only local cells across native Codex and
+Claude. `enable-disable-resume` uses the Experimental settings UI to enable
+Agent Chat, starts a conversation, disables new messages, verifies the public
+write endpoint rejects a send without creating work, and re-enables the same
+conversation with its remembered context. The company, credential, and native
+agent are fixture-provisioned. This qualifies the experimental-settings path,
+not native first-run onboarding: the current production wizard offers legacy
+adapters, and native API tools remain an independent opt-in.
+
+`followup-while-running` and `revise-while-running` send a second browser message
+while the provider runs a bounded command waiting for a fixture brief file.
+The command publishes its own readiness file; the harness verifies the original
+run is still active after the follow-up is saved, then supplies the brief.
+The final reply must contain the previously undisclosed brief reference and the
+new request's marker. The revision case also checks the saved plan uses Friday
+instead of the original Monday. The oracle permits either steering the active
+run or one queued successor, but rejects missing/duplicate comments, failed or
+unfinished runs, stale plan contents, and unintended tasks/projects. This does
+not qualify active-task reassignment or worker-crash recovery.
+The maximum run count remains the cost estimate; the shared harness honors the
+one-run minimum only for these two interruption cases. Exactly one reply may
+consume the follow-up marker, and it must be attributed to the final provider run.
 
 ```sh
 pnpm test:e2e:runner -- --list --suite agent-chat-hardening
@@ -224,7 +250,8 @@ Missing provider credentials fail paid preflight and are not passing coverage.
 
 The default `--all` selection is 171 cells (148 local and 23 Daytona) and 371
 expected paid agent turns. The explicit-only everyday suite adds 38 catalog cells
-and chat hardening adds 18. Both are excluded from `--all`. The full catalog has 227 cells.
+and chat hardening adds 18; chat stories adds six. All three are excluded from
+`--all`. The full catalog has 233 cells.
 Follow-up steps remain ordered within their cell; all other
 cells are independent. Narrow selectors are strongly recommended while
 developing fixtures.
