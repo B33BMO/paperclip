@@ -1614,6 +1614,7 @@ export function TaskChatThread(props: TaskChatThreadProps) {
             tone: source.status === "cancelled" ? "neutral" : "error",
             label,
             detail,
+            retryable: code !== "native_session_cleanup_quarantined",
             collapsible: true,
             runId: source.id,
             createdAtIso: finishedAt
