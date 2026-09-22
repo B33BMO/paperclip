@@ -10,6 +10,8 @@ import { githubChatReviewService } from "./chat-github-reviews.js";
 import { githubChatRegistrationService } from "./chat-github-registration.js";
 import { githubChatPrincipalAccess } from "./chat-github-access.js";
 import { githubAppJwt } from "./chat-github-client.js";
+import { resumeSlackConversation } from "./slack-conversation-state.js";
+import { settleSlackConversation } from "./slack-conversation-lifecycle.js";
 import { runtimeCanonicalOrigin } from "./cloud-runtime-identity.js";
 import { takePhotonCompanion } from "./photon/attachments.js";
 import { writePhotonCheckpoint } from "./photon/receiver.js";
@@ -16248,6 +16250,9 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
             direction: "inbound",
           })
           .onConflictDoNothing();
+        if (taskEndpoint.provider === "slack") {
+          await resumeSlackConversation(taskTx as unknown as Db, endpoint.companyId, conversation.issueId);
+        }
         await taskTx
           .update(chatConversations)
           .set({
@@ -37958,7 +37963,12 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
           // this cap. Different conversations for one bot keep the existing
           // endpoint-exclusive credential fence instead of timing out behind it.
           const task = Promise.resolve()
-            .then(() => processSelectedPublication(selectedPublication))
+            .then(async () => {
+              await processSelectedPublication(selectedPublication);
+              await settleSlackConversation(db, selectedPublication.companyId, selectedPublication.issueId).catch((err) => {
+                logger.warn({ err, publicationId: selectedPublication.id }, "Slack conversation settlement deferred to reconciliation");
+              });
+            })
             .catch((error: unknown) => {
               if (!failed) {
                 failed = true;

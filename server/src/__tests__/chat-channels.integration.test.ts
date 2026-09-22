@@ -28233,6 +28233,52 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     await resumed.service.shutdown();
   });
 
+  it("returns two answered Slack turns to Idle in the same thread", async () => {
+    const fixture = await seedCompany();
+    const { callbacks, endpoint, service } = await configuredSlackEndpoint(fixture);
+    const thread = makeThread({ channelId: "C-IDLE", id: "slack:C-IDLE:4049.1", name: "idle" });
+    let issueId: string | undefined;
+    let conversationId: string | undefined;
+    for (const [index, text] of ["@maya are you there?", "what is your name?"].entries()) {
+      const providerMessageId = `4049.${index + 1}`;
+      await deliverMessage({ callbacks, endpointId: endpoint.id, thread: thread.thread,
+        message: makeMessage({ id: providerMessageId, text, mentioned: index === 0 }),
+        trigger: index === 0 ? "mention" : "subscribed_message" });
+      const conversations = await db.select().from(chatConversations).where(eq(chatConversations.endpointId, endpoint.id));
+      expect(conversations).toHaveLength(1);
+      const conversation = conversations[0]!;
+      expect(conversation.state).toBe("active");
+      expect((await issueService(db).getById(conversation.issueId))?.status).toBe("todo");
+      if (issueId) expect(conversation.issueId).toBe(issueId);
+      if (conversationId) expect(conversation.id).toBe(conversationId);
+      issueId = conversation.issueId;
+      conversationId = conversation.id;
+      const runId = randomUUID();
+      await db.insert(heartbeatRuns).values({ id: runId, companyId: fixture.companyId,
+        agentId: fixture.assignedAgentId, status: "succeeded", runtimeMode: "legacy", finishedAt: new Date(),
+        contextSnapshot: await chatWakeContext({ endpointId: endpoint.id, issueId, provider: "slack", providerMessageId }) });
+      // Model execution consuming the admitted wake and committing its checkout.
+      await db.update(agentWakeupRequests).set({ status: "completed", runId })
+        .where(and(eq(agentWakeupRequests.companyId, fixture.companyId), eq(agentWakeupRequests.status, "queued")));
+      await db.update(issues).set({ status: "in_progress" }).where(eq(issues.id, issueId));
+      await addSelectedChatFinal({ companyId: fixture.companyId, agentId: fixture.assignedAgentId,
+        issueId, runId, body: index === 0 ? "Yes, I'm here." : "I'm Maya." });
+      await service.processPendingPublications();
+      await vi.waitFor(async () => {
+        const issue = await issueService(db).getById(issueId!);
+        expect(issue?.status).toBe("in_review");
+        expect(issue?.externalConversationState).toBe("waiting");
+        expect(issue?.conversationAgentId).toBeNull();
+        expect(issue?.conversationUserId).toBeNull();
+      });
+      // A provider replay must not wake or reactivate the completed turn.
+      await deliverMessage({ callbacks, endpointId: endpoint.id, thread: thread.thread,
+        message: makeMessage({ id: providerMessageId, text, mentioned: index === 0 }),
+        trigger: index === 0 ? "mention" : "subscribed_message" });
+      expect((await issueService(db).getById(issueId))?.externalConversationState).toBe("waiting");
+    }
+  });
+
   it("coalesces one Slack run's lifecycle and final response despite an interleaved task control", async () => {
     const fixture = await seedCompany();
     const { callbacks, endpoint, runtime, service } =

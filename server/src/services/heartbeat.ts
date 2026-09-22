@@ -1,3 +1,5 @@
+import { externalConversationStateSql, nonIdleSlackIssueCondition } from "./slack-conversation-state.js";
+import { settleSlackConversation } from "./slack-conversation-lifecycle.js";
 import { publicChatTaskUrl } from "./chat-task-url.js";
 import { toolActionDeliveryService } from "./tool-action-delivery.js";
 import { githubBotConnectionIdsForRun } from "./chat-github-tools.js";
@@ -10598,6 +10600,7 @@ export function heartbeatService(
       .select({
         chatCommunicationGuidance: chatConversations.communicationGuidance,
         chatAssignedAgentId: chatEndpoints.assignedAgentId,
+        externalConversationState: externalConversationStateSql(),
         conversationAgentId: issues.conversationAgentId,
         conversationUserId: issues.conversationUserId,
         conversationState: issues.conversationState,
@@ -13058,7 +13061,8 @@ export function heartbeatService(
 
     const issueId = readNonEmptyString(context.issueId);
     if (!issueId) return;
-    if (isWaitingConversation(await getIssueExecutionContext(run.companyId, issueId))) return;
+    const waitingContext = await getIssueExecutionContext(run.companyId, issueId);
+    if (isWaitingConversation(waitingContext) || waitingContext?.externalConversationState === "waiting") return;
 
     const [issue, agent] = await Promise.all([
       db
@@ -13259,7 +13263,8 @@ export function heartbeatService(
     const issueId =
       readNonEmptyString(context.issueId) ?? readNonEmptyString(context.taskId);
     if (!issueId) return;
-    if (isWaitingConversation(await getIssueExecutionContext(run.companyId, issueId))) return;
+    const waitingContext = await getIssueExecutionContext(run.companyId, issueId);
+    if (isWaitingConversation(waitingContext) || waitingContext?.externalConversationState === "waiting") return;
     if (
       readNonEmptyString(context.goalControlRequestId) ||
       context.resumeSessionGoalHeartbeat === true
@@ -13577,7 +13582,8 @@ export function heartbeatService(
       readNonEmptyString(contextSnapshot.issueId) ??
       readNonEmptyString(contextSnapshot.taskId);
     if (!issueId) return;
-    if (isWaitingConversation(await getIssueExecutionContext(run.companyId, issueId))) return;
+    const waitingContext = await getIssueExecutionContext(run.companyId, issueId);
+    if (isWaitingConversation(waitingContext) || waitingContext?.externalConversationState === "waiting") return;
 
     const issue = await db
       .select({
@@ -16734,6 +16740,7 @@ export function heartbeatService(
           isNull(issues.hiddenAt),
           inArray(issues.status, [...TIMER_ACTIONABLE_ISSUE_STATUSES]),
           isNull(issues.conversationAgentId),
+          nonIdleSlackIssueCondition(),
         ),
       )
       .limit(1)
@@ -26059,6 +26066,14 @@ export function heartbeatService(
         suppressImmediateRecovery: options.suppressImmediateRecovery,
       });
       await applyWakeQueuePostCommitEffects(postCommitEffects);
+      const completed = await getRun(run.id);
+      const issueId = readNonEmptyString(completed?.contextSnapshot?.issueId)
+        ?? readNonEmptyString(completed?.contextSnapshot?.taskId) ?? completed?.nativeIssueId;
+      if (completed?.status === "succeeded" && issueId) {
+        await settleSlackConversation(db, run.companyId, issueId).catch((err) => {
+          logger.warn({ err, runId: run.id }, "Slack conversation settlement deferred to reconciliation");
+        });
+      }
     } catch (error) {
       if (
         error instanceof WakeQueueApplicationError &&
