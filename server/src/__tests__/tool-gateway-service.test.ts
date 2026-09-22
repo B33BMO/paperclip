@@ -433,6 +433,32 @@ describeEmbeddedPostgres("tool gateway service", () => {
     expect(native).toHaveLength(2);
   });
 
+  it("keeps reviewed results from different source runs in separate non-coalescing wakes", async () => {
+    const { company, agent, issue, run } = await createRunFixture(db);
+    const [secondRun] = await db.insert(heartbeatRuns).values({ companyId: company.id,
+      agentId: agent.id, status: "running", contextSnapshot: { issueId: issue.id } }).returning();
+    await db.insert(toolPolicies).values({ companyId: company.id, name: "Ask first", policyType: "require_approval", selectors: { toolName: "mcp-remote-fixture:update_note" } });
+    const gateway = createTestToolGatewayService(db);
+    for (const sourceRun of [run, secondRun]) {
+      const session = await gateway.createSession({ companyId: company.id, agentId: agent.id, runId: sourceRun.id });
+      await expect(gateway.executeTool({ sessionToken: session.token, tool: "mcp-remote-fixture:update_note", parameters: { noteId: sourceRun.id, body: "separate origin" } })).rejects.toMatchObject({ reasonCode: "approval_required" });
+    }
+    const requests = await db.select().from(toolActionRequests);
+    for (const action of requests) await gateway.declineActionRequest({ companyId: company.id, issueId: issue.id,
+      interactionId: action.interactionId!, actionRequestId: action.id, actor: { userId: "reviewer" } });
+    await db.update(heartbeatRuns).set({ status: "succeeded" }).where(eq(heartbeatRuns.companyId, company.id));
+    const wakeup = vi.fn(async (agentId: string, input: any) => (await db.insert(agentWakeupRequests).values({ companyId: company.id,
+      agentId, source: input.source, idempotencyKey: input.idempotencyKey, payload: input.payload }).returning())[0] as any);
+    await toolActionDeliveryService(db, { wakeup }).sweepPending();
+    expect(wakeup).toHaveBeenCalledTimes(2);
+    expect(new Set(wakeup.mock.calls.map(([, input]) => input.payload.sourceRunId))).toEqual(new Set([run.id, secondRun.id]));
+    for (const [, input] of wakeup.mock.calls) {
+      expect(input.allowRunCoalescing).toBe(false);
+      expect(input.payload.toolActionRequestIds).toHaveLength(1);
+    }
+    expect((await db.select().from(toolActionDeliveries)).every(row => row.deliveredAt)).toBe(true);
+  });
+
   it("bounds many outcomes and recovers their full-result reference after wake commit", async () => {
     const { company, agent, run } = await createRunFixture(db);
     await db.insert(toolPolicies).values({ companyId: company.id, name: "Ask first", policyType: "require_approval", selectors: { toolName: "mcp-remote-fixture:update_note" } });

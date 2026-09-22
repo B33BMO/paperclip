@@ -998,6 +998,19 @@ oauth_config:
       - reactions:read
       - reactions:write
       - users:read
+      - emoji:read
+      - pins:read
+      - pins:write
+      - bookmarks:read
+      - bookmarks:write
+      - channels:manage
+      - channels:write.topic
+      - groups:write
+      - groups:write.topic
+      - canvases:read
+      - canvases:write
+      - lists:read
+      - lists:write
 settings:
   org_deploy_enabled: false
   socket_mode_enabled: false

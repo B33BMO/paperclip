@@ -1,3 +1,4 @@
+import { SLACK_BOT_TOOL_SCOPES } from "@paperclipai/shared";
 import { defaultSlackAppName, slackBotNameForAgent } from "./slack-app-name";
 import { GitHubChatSetup } from "./GitHubChatSetup";
 import { GitHubAgentTrustWarning } from "@/components/GitHubAgentTrustWarning";
@@ -846,6 +847,7 @@ oauth_config:
       - reactions:read
       - reactions:write
       - users:read
+${SLACK_BOT_TOOL_SCOPES.map(scope => `      - ${scope}`).join("\n")}
 settings:
   org_deploy_enabled: false
   socket_mode_enabled: false

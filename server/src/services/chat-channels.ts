@@ -1,3 +1,10 @@
+import { slackExplicitPublicationDuplicate } from "./connectors/slack-publication.js";
+import { rememberVerifiedSlackSearchEvent, slackSearchActionToken } from "./connectors/slack-search-context.js";
+import { slackAuthorizationRevision } from "./connectors/slack-revision.js";
+import { slackPublicationAllowed } from "./connectors/slack-access.js";
+import { instanceSettingsService } from "./instance-settings.js";
+import { registerSlackTaskAuthority, slackRunOrigin } from "./connectors/slack-authority.js";
+import { captureRunIdentity } from "./run-identity.js";
 import { buildChatCommunicationGuidance } from "./chat-communication-guidance.js";
 function githubPolicyRecord(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 import { githubChatManagementService } from "./chat-github-management.js";
@@ -26911,6 +26918,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
           // it reach SDK callbacks, delivery admission, principals, or lifecycle.
           return new Response("ignored", { status: 200 });
         }
+        if (incomingWorkspaceId === endpoint.providerAccountId) rememberVerifiedSlackSearchEvent(db, endpoint.id, endpoint.providerAccountId, body);
       }
     }
     if (provider === "github") {
@@ -33803,6 +33811,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       const destinationAllowed =
         endpoint !== null &&
         conversation !== null &&
+        (endpoint.provider !== "slack" || await slackPublicationAllowed(tx, endpoint.companyId, endpoint.id, input.publication.issueId, conversation.externalConversationId, null)) &&
         (conversation.isDirectMessage
           ? endpoint.allowDirectMessages
           : nonDirectDestinationAllowed(endpoint, resource));
@@ -37023,6 +37032,16 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       }
       return;
     }
+    const explicitSlackDelivery = await slackExplicitPublicationDuplicate(db, publication);
+    if (explicitSlackDelivery === "unresolved") {
+      // Keep the durable publication pending until the explicit send is settled;
+      // a missing provider receipt does not authorize a duplicate.
+      return;
+    }
+    if (explicitSlackDelivery === "delivered") {
+      await db.update(chatPublications).set({ state: "cancelled", redactedError: "Identical response already delivered by Slack tool", updatedAt: new Date() }).where(and(eq(chatPublications.id, publication.id), inArray(chatPublications.state, ["pending", "retry"])));
+      return;
+    }
     const earlierOpenPublication = await db
       .select({ id: chatPublications.id })
       .from(chatPublications)
@@ -38130,6 +38149,63 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     return listResources(endpointId);
   }
 
+  const unregisterSlackTaskAuthority = registerSlackTaskAuthority(db, async (binding) => {
+    if (!(await instanceSettingsService(db).getExperimental()).enableChatConnectors)
+      throw forbidden("Chat connectors are disabled");
+    const identity = await slackRunOrigin(db, binding);
+    const run = identity.run;
+    if ((run.contextSnapshot?.issueId ?? run.contextSnapshot?.taskId) !== binding.issueId || !run.responsibleUserId)
+      throw forbidden("Slack tools require the bound task and an accepted linked user");
+    const resolved = await db.transaction(async (tx) => {
+      const [action] = await tx.select().from(chatActions).where(and(
+        eq(chatActions.companyId, binding.companyId),
+        eq(chatActions.kind, "inbound_wakeup"),
+        sql`${chatActions.payload}->>'issueId' = ${binding.issueId}`,
+        sql`${chatActions.payload}->>'agentId' = ${binding.agentId}`,
+        identity.sourceMessageId
+          ? sql`${chatActions.payload}->>'commentId' = ${identity.sourceMessageId}`
+          : eq(chatActions.id, run.wakeupRequestId ?? "00000000-0000-0000-0000-000000000000"),
+      )).limit(1);
+      if (!action || action.payload.requestedByActorType !== "user" || action.payload.requestedByActorId !== run.responsibleUserId)
+        throw forbidden("Slack tools require a verified linked Slack request");
+      // This standalone resolver does not own the scheduler's issue lock. Use
+      // the ingress lock order (endpoint, then issue) so a normal webhook or
+      // endpoint update cannot turn tool setup into a NOWAIT failure. The
+      // scheduler retains its nonblocking check when it owns the issue first.
+      await tx.select({ id: chatEndpoints.id }).from(chatEndpoints).where(and(
+        eq(chatEndpoints.companyId, binding.companyId),
+        eq(chatEndpoints.id, action.endpointId),
+      )).for("no key update");
+      const source = await authorizeInboundWakeup(tx, action);
+      if (source.endpoint.provider !== "slack") throw forbidden("This is not a Slack task");
+      const [principal] = await tx.select().from(chatExternalPrincipals).where(and(
+        eq(chatExternalPrincipals.companyId, binding.companyId),
+        eq(chatExternalPrincipals.id, action.principalId!),
+        eq(chatExternalPrincipals.provider, "slack"),
+        eq(chatExternalPrincipals.providerAccountId, source.endpoint.providerAccountId!),
+        eq(chatExternalPrincipals.isBot, false),
+      ));
+      if (!principal) throw forbidden("Slack sender is no longer available");
+      return { ...source, principalId: principal.id, slackUserId: principal.externalId };
+    });
+    const credentials = await resolveCredentials(resolved.endpoint);
+    if (!credentials.botToken) throw forbidden("Slack bot credential is unavailable");
+    return {
+      endpoint: resolved.endpoint, conversation: resolved.conversation,
+      principalId: resolved.principalId, slackUserId: resolved.slackUserId,
+      userId: run.responsibleUserId, deliveryId: resolved.delivery.id,
+      identityContextId: identity.context?.id ?? null,
+      workMode: resolved.issue.workMode,
+      revision: createHash("sha256").update(JSON.stringify([
+        resolved.endpoint.status, resolved.endpoint.allowDirectMessages, resolved.conversation.sessionGeneration,
+        run.responsibleUserId, credentials.botToken,
+        await slackAuthorizationRevision(db, binding.companyId, resolved.endpoint.id, resolved.endpoint.connectionId, binding.agentId, run.responsibleUserId),
+      ])).digest("hex"),
+      botToken: credentials.botToken,
+      searchActionToken: slackSearchActionToken(db, resolved.endpoint.id, resolved.endpoint.providerAccountId!, resolved.slackUserId, String((resolved.delivery.normalizedEvent.message as Record<string, unknown> | undefined)?.providerMessageId ?? "")),
+    };
+  });
+
   return {
     saveGitHubSetupProgress: async (endpointId: string, stage: NonNullable<ChatEndpointSetupState["github"]>["stage"]) => {
       const record = await endpointRecord(endpointId);
@@ -38192,6 +38268,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       shuttingDown = true;
       await Promise.allSettled([...failedRetryTasks.values()]);
       unregisterFailedRetryAuthority();
+      unregisterSlackTaskAuthority();
       unregisterCommittedResponseAuthority();
       await Promise.allSettled([...publicationEndpointTasks.values()]);
       await Promise.allSettled([...backgroundMessageTasks]);

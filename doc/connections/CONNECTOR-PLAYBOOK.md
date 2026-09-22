@@ -2176,3 +2176,10 @@ Collect end-to-end evidence using the production validation matrix above:
 - Revocation removes Notion tools and blocks execution.
 - Audit rows prove actor, run/issue context, connection, tool, decision,
   reason code, and outcome.
+
+## Slack task tools
+
+For Slack bot tool contributions, use [Slack task tools](SLACK-TASK-TOOLS.md). It
+documents verified task authority, read/write boundaries, per-user search grants,
+method/scope contracts, delivery and current runtime limitations. Keep bot tools
+separate from the user-authorized Slack MCP connection.

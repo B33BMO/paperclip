@@ -13,6 +13,8 @@ import {
   emailEndpointSetupSchema,
   emailConnectionSchema,
   emailSendSchema,
+  slackToolCallSchema,
+  slackSearchConfigSchema,
   // Agent
   AGENT_PALETTE_IDS,
   AGENT_AVATAR_SIZES,
@@ -1483,6 +1485,12 @@ const BOARD_ONLY_OPERATIONS = new Set([
   // Chat endpoints expose provider credentials, identity mappings, access
   // policy, and replay controls. Every mounted handler asserts a board actor;
   // keep the generated security contract equally restrictive.
+  "GET /api/slack/search/callback",
+  "GET /api/companies/{companyId}/slack/endpoints/{endpointId}/capabilities",
+  "GET /api/companies/{companyId}/slack/endpoints/{endpointId}/search",
+  "PUT /api/companies/{companyId}/slack/endpoints/{endpointId}/search",
+  "POST /api/companies/{companyId}/slack/endpoints/{endpointId}/search/connect",
+  "DELETE /api/companies/{companyId}/slack/endpoints/{endpointId}/search",
   "GET /api/companies/{companyId}/chat-endpoints",
   "POST /api/companies/{companyId}/chat-endpoints",
   "GET /api/chat-endpoints/{endpointId}",
@@ -1622,7 +1630,7 @@ function resolveOperationAuthLevel(
 ): OpenApiAuthLevel {
   const key = operationKey(method, path);
   if (PUBLIC_OPERATIONS.has(key)) return "public";
-  if (key === "POST /api/mcp/project-tools") return "agent_run";
+  if (key === "POST /api/mcp/project-tools" || key === "POST /api/companies/{companyId}/slack/tasks/{issueId}/tools") return "agent_run";
   if (RUNTIME_TOOLS_OPERATIONS.has(key)) return "runtime_tools";
   if (INSTANCE_ADMIN_OPERATIONS.has(key)) return "instance_admin";
   if (
@@ -2100,6 +2108,28 @@ for (const [method, path, summary, body, success] of [
     responses: { [success]: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound, 409: r.conflict },
   });
 }
+
+// Slack bot tools use the verified task/run identity; setup and search grants
+// remain board-only and company/endpoint scoped.
+for (const [method, path, summary, body] of [
+  ["get", "/api/companies/{companyId}/slack/endpoints/{endpointId}/capabilities", "Inspect Slack bot capabilities and missing scopes", undefined],
+  ["get", "/api/companies/{companyId}/slack/endpoints/{endpointId}/search", "Read personal Slack search authorization status", undefined],
+  ["put", "/api/companies/{companyId}/slack/endpoints/{endpointId}/search", "Configure optional Slack search OAuth credentials", slackSearchConfigSchema],
+  ["post", "/api/companies/{companyId}/slack/endpoints/{endpointId}/search/connect", "Begin personal Slack search authorization", undefined],
+  ["delete", "/api/companies/{companyId}/slack/endpoints/{endpointId}/search", "Disconnect personal Slack search and invalidate pending authorization", undefined],
+  ["post", "/api/companies/{companyId}/slack/tasks/{issueId}/tools", "Execute a task-bound Slack bot tool", slackToolCallSchema],
+] as const) {
+  registry.registerPath({ method, path, tags: ["chat-channels"], summary,
+    description: "Experimental Slack task tools. Current company, endpoint, linked requester, task/run authority and action permissions are revalidated. Bot credentials remain server-side. Search grants never authorize writes or expand bot membership. Native search is unavailable until the runtime qualifies transient result handling.",
+    request: { params: z.object(Object.fromEntries([...path.matchAll(/\{([^}]+)\}/g)].map(match => [match[1], z.string().uuid()]))), ...(body ? { body: jsonBody(body) } : {}) },
+    responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound, 409: r.conflict },
+  });
+}
+registry.registerPath({ method: "get", path: "/api/slack/search/callback", tags: ["chat-channels"], summary: "Complete personal Slack search OAuth",
+  description: "Requires the same signed-in user, single-use state, linked Slack identity and workspace; redirects to connector Access. Never accepts model-supplied identity.",
+  request: { query: z.object({ state: z.string(), code: z.string() }) },
+  responses: { 302: { description: "Redirect to connector Access" }, 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden },
+});
 
 // ─── Chat Channels ─────────────────────────────────────────────────────────
 

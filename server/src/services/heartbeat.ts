@@ -21273,7 +21273,7 @@ export function heartbeatService(
         startedAtMs: skillsPrepareStartedAtMs,
         endedAtMs: Date.now(),
       });
-      const connectorAssignments = await resolveConnectorAssignments(db, { companyId: agent.companyId, agentId: agent.id });
+      const connectorAssignments = await resolveConnectorAssignments(db, { companyId: agent.companyId, agentId: agent.id, runId: run.id, issueId: typeof context.issueId === "string" ? context.issueId : undefined });
       const connectorSkillConfig = await applyConnectorSkills(effectiveResolvedConfig, runtimeSkillEntries, connectorAssignments);
       // Both CLI adapters and native context materialization use the same resolved set.
       runtimeSkillEntries.splice(0, runtimeSkillEntries.length, ...connectorSkillConfig.paperclipRuntimeSkills);
@@ -24930,16 +24930,21 @@ export function heartbeatService(
                 livenessRun.id,
                 livenessRun.companyId,
               );
-            const externalChatPresentationContext =
-              isExternalChatPresentationContext(livenessRun.contextSnapshot);
+            const externalChatPresentationCandidate =
+              isExternalChatPresentationContext(livenessRun.contextSnapshot) ||
+              parseObject(livenessRun.contextSnapshot).source === "tool_action_review";
             const externalChatPresentationAuthorization =
-              issueId && externalChatPresentationContext
+              issueId && externalChatPresentationCandidate
                 ? await resolveChatRunPresentationAuthorizationReason(db, {
                     companyId: livenessRun.companyId,
                     issueId,
                     runId: livenessRun.id,
                   })
                 : null;
+            const externalChatPresentationContext = isExternalChatPresentationContext(
+              livenessRun.contextSnapshot,
+              externalChatPresentationAuthorization === CHAT_RUN_PRESENTATION_AUTHORIZATION_REASON,
+            );
             const resolved = resolveHeartbeatRunResponse({
               resultJson: persistedResultJson,
               conversationTurnFinished: isConversation(issueContext) &&

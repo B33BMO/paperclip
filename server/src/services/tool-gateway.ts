@@ -1,3 +1,9 @@
+import { HttpError } from "../errors.js";
+import { claimSlackRateLimitRetry } from "./connectors/slack-retry.js";
+import { resolveSlackTaskAuthority } from "./connectors/slack-authority.js";
+import { SLACK_TOOLS } from "@paperclipai/shared";
+import { slackToolsForSession } from "./connectors/slack-catalog.js";
+import { executeSlackTool } from "./connectors/slack.js";
 import { githubGuestBotConnectionForSession, githubBotToolsForSession } from "./chat-github-tools.js";
 import { githubChatReviewService } from "./chat-github-reviews.js";
 import { runIdentityContexts } from "@paperclipai/db";
@@ -246,7 +252,8 @@ export type ToolGatewayProviderType =
   | "paperclip_self"
   | "paperclip_plugin"
   | "paperclip_virtual"
-  | "paperclip_github_chat";
+  | "paperclip_github_chat"
+  | "paperclip_slack_chat";
 
 export interface ConnectedMcpGatewayMetadata {
   applicationId: string;
@@ -302,6 +309,8 @@ export interface ToolGatewaySession {
   responsibleUserId?: string | null;
   /** Captured by the controller for this request, never accepted from tool arguments. */
   identityContextId?: string | null;
+  /** Set only after verifying the signed approved action. */
+  approvedSlackInvocationId?: string;
   createdAt: Date;
   expiresAt: Date;
 }
@@ -2635,7 +2644,7 @@ export function createToolGatewayService(
     const hasOnDemandTargets = connectedTools.some(isOnDemandRemoteTool);
     const virtualTools = hasOnDemandTargets ? VIRTUAL_TOOLS : [];
     const githubBotTools = await githubBotToolsForSession(db, session);
-    const tool = [...allTools(), ...connectedTools, ...virtualTools, ...githubBotTools]
+    const tool = [...allTools(), ...connectedTools, ...virtualTools, ...githubBotTools, ...await slackToolsForSession(db, session)]
       .filter(
         (candidate) =>
           session.agentId ||
@@ -2855,6 +2864,7 @@ export function createToolGatewayService(
     const tools = [
       ...allTools(),
       ...await githubBotToolsForSession(db, session),
+      ...await slackToolsForSession(db, session),
       ...allConnectedTools.filter((tool) => !isOnDemandRemoteTool(tool)),
     ].filter(
       (tool) =>
@@ -2917,6 +2927,19 @@ export function createToolGatewayService(
   ) {
     const params = asRecord(parameters) ?? {};
 
+    if (tool.providerType === "paperclip_slack_chat") {
+      if (!session.agentId || !session.runId || !session.issueId) throw new ToolGatewayHttpError(403, "Slack task binding required", "slack_task_required");
+      try {
+      const data = await executeSlackTool(db, { companyId: session.companyId, agentId: session.agentId, runId: session.runId, issueId: session.issueId, identityContextId: session.identityContextId, approvedInvocationId: session.approvedSlackInvocationId }, tool.upstreamToolName ?? "", parameters, fetch, invocationId);
+      return { content: JSON.stringify(data), data };
+      } catch (error) {
+        if (error instanceof HttpError) {
+          const details = asRecord(error.details) ?? {};
+          throw new ToolGatewayHttpError(error.status, error.message, typeof details.code === "string" ? details.code : "slack_operation_rejected", details);
+        }
+        throw error;
+      }
+    }
     if (tool.providerType === "paperclip_github_chat") {
       const data = await githubChatReviewService(db).execute(session, tool.upstreamToolName ?? "", parameters, invocationId);
       return { content: JSON.stringify(data), data };
@@ -5427,6 +5450,11 @@ export function createToolGatewayService(
     tool: ToolGatewayDescriptor,
     options: { requireResolvedCredentials?: boolean } = {},
   ): Promise<Record<string, unknown> | null> {
+    if (tool.providerType === "paperclip_slack_chat") {
+      if (!session.agentId || !session.runId || !session.issueId) throw new ToolGatewayHttpError(403, "Slack task binding required", "slack_task_required");
+      const authority = await resolveSlackTaskAuthority(db, { companyId: session.companyId, agentId: session.agentId, runId: session.runId, issueId: session.issueId, identityContextId: session.identityContextId, approvedInvocationId: session.approvedSlackInvocationId });
+      return { endpointId: authority.endpoint.id, userId: authority.userId, revision: authority.revision, identityContextId: authority.identityContextId };
+    }
     if (
       tool.providerType !== "mcp_remote_http" ||
       !tool.connectionId ||
@@ -7752,6 +7780,7 @@ export function createToolGatewayService(
         session,
         signedPayload.identityContextId,
       );
+      session.approvedSlackInvocationId = invocation.id;
       tool = await findToolForSession(session, invocation.toolName);
       liveApprovalSnapshot = await connectedRemoteApprovalSnapshot(
         session,
@@ -9512,6 +9541,7 @@ export function createToolGatewayService(
           session,
           signedPayload.identityContextId,
         );
+        session.approvedSlackInvocationId = invocation.id;
         const tool = await findToolForSession(session, invocation.toolName);
         if (
           !approvalSnapshotsMatch(
@@ -9668,6 +9698,18 @@ export function createToolGatewayService(
         }
       }
       let tool = await findToolForSession(session, input.tool);
+      if (tool.providerType === "paperclip_slack_chat") {
+        const definition = SLACK_TOOLS.find(t => t.name === tool.upstreamToolName);
+        const args = definition?.schema.parse(input.parameters ?? {}) as Record<string, unknown> | undefined;
+        if (!args) throw new ToolGatewayHttpError(403, "Unknown Slack operation", "slack_task_required");
+        if (typeof args.idempotencyKey === "string") {
+          const key = `slack:${tool.connectionId}:${session.issueId}:${session.responsibleUserId}:${args.idempotencyKey}`;
+          const [prior] = await db.select().from(toolInvocations).where(and(eq(toolInvocations.companyId, session.companyId), eq(toolInvocations.idempotencyKey, key)));
+          const currentHash = validateToolContent({ value: args, direction: "arguments", sensitiveMode: "redact", promptInjectionMode: "ignore" }).summary.sha256;
+          if (prior && (prior.toolName !== tool.name || prior.argumentsHash !== currentHash)) throw new ToolGatewayHttpError(409, "Idempotency key belongs to a different Slack operation", "slack_idempotency_conflict");
+          input = { ...input, idempotencyKey: key };
+        }
+      }
       let virtualToolName: string | null = null;
       let requestedParameters: unknown = input.parameters ?? {};
 
@@ -10190,14 +10232,20 @@ export function createToolGatewayService(
           idempotencyKey: input.idempotencyKey,
           consumeRateLimit: true,
         });
-        const accessDecision = await policyService.decide(decisionInput);
+        let accessDecision = await policyService.decide(decisionInput);
+        if (accessDecision.allowed && tool.providerType === "paperclip_slack_chat" && SLACK_TOOLS.some(t => t.name === tool.upstreamToolName && t.risk === "approval")) {
+          accessDecision = { ...accessDecision, allowed: false, decision: "require_approval", reasonCode: "requires_approval_policy", explanation: "Slack destructive actions, channel creation and invitations require approval." };
+        }
         const recorded = await policyService.recordInvocation(
           decisionInput,
           accessDecision,
         );
         await policyService.writeAudit(decisionInput, accessDecision);
         invocationId = recorded.invocation.id;
-        if (recorded.replayed) {
+        const retryingSlackRateLimit = recorded.replayed && accessDecision.allowed && tool.providerType === "paperclip_slack_chat" && session.agentId && session.runId && session.issueId
+          ? await claimSlackRateLimitRetry(db, { companyId: session.companyId, agentId: session.agentId, runId: session.runId, issueId: session.issueId, identityContextId: session.identityContextId }, invocationId)
+          : false;
+        if (recorded.replayed && !retryingSlackRateLimit) {
           await writeAudit({
             session,
             companyId: session.companyId,
