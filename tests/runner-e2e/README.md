@@ -325,6 +325,48 @@ pullable, includes the provider pack, and advertises `dial_ws_loopback`,
 the image job deliberately fails its anonymous-pull check otherwise. Existing
 content tags are never rebuilt or overwritten by the workflow.
 
+### Match the local controller package to the Daytona image
+
+Native ACPX (including Claude) and OpenCode Daytona cells also require
+`PAPERCLIP_RUNNER_REMOTE_PROVIDER_PACK_PATH` on the controller. The package and
+the image must come from the same verified build. Equal provider version numbers
+are insufficient: verification compares the complete manifest, source revision,
+Node executable, lockfile, and built bridge hashes. An independently rebuilt
+package can fail that comparison and trigger a large upload before any model
+work begins.
+
+Prefer the hosted workflow: it builds the image and controller package together,
+and uses the image's recorded source revision when reusing an image. For a local
+run, use the immutable image from the campaign for the code under test and copy
+its exact package. Do not copy credentials or change manifest fields to force a
+match. Docker must be running; the temporary container below is never started.
+
+```sh
+(
+  set -eu
+  : "${PAPERCLIP_E2E_DAYTONA_IMAGE:?Set the verified immutable image digest}"
+  case "$PAPERCLIP_E2E_DAYTONA_IMAGE" in
+    *@sha256:*) ;;
+    *) echo "Use an immutable image digest" >&2; exit 1 ;;
+  esac
+  docker pull --platform linux/amd64 "$PAPERCLIP_E2E_DAYTONA_IMAGE"
+  pack_dir="$(mktemp -d "${TMPDIR:-/tmp}/paperclip-e2e-provider-pack.XXXXXX")"
+  container_id="$(docker create --platform linux/amd64 --network none \
+    --entrypoint /bin/true "$PAPERCLIP_E2E_DAYTONA_IMAGE")"
+  trap 'docker rm "$container_id" >/dev/null' EXIT
+  docker cp "$container_id:/opt/paperclip-runner/provider-pack/." "$pack_dir/"
+  test -f "$pack_dir/provider-pack.json"
+  printf 'Set PAPERCLIP_RUNNER_REMOTE_PROVIDER_PACK_PATH to: %s\n' "$pack_dir"
+)
+```
+
+Export the printed path in the shell that launches the eval. Runtime verification
+still checks all package artifacts. The run log must show
+`using manifest-matched provider pack from the sandbox image`; after reuse it can
+instead show `reusing manifest-matched provider pack from the workspace`. A setup failure before provider
+execution does not measure Claude recovery. Keep cold-upload coverage separate
+from the recovery test, and retain mismatched or failed attempts as evidence.
+
 ## Evidence and cleanup
 
 Packaged, access-controlled evidence is written beneath
