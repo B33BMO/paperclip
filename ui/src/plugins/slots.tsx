@@ -701,6 +701,7 @@ export function usePluginSlots(filters: SlotFilters): UsePluginSlotsResult {
 
 type PluginSlotErrorBoundaryProps = {
   slot: ResolvedPluginSlot;
+  fallback?: ReactNode;
   className?: string;
   children: ReactNode;
 };
@@ -728,6 +729,7 @@ class PluginSlotErrorBoundary extends Component<PluginSlotErrorBoundaryProps, Pl
 
   override render() {
     if (this.state.hasError) {
+      if (this.props.fallback !== undefined) return this.props.fallback;
       return (
         <div className={cn("rounded-md border border-destructive/30 bg-destructive/5 px-2 py-1 text-xs text-destructive", this.props.className)}>
           {this.props.slot.pluginDisplayName}: failed to render
@@ -770,6 +772,10 @@ type PluginSlotMountProps = {
   context: PluginSlotContext;
   className?: string;
   missingBehavior?: "hidden" | "placeholder";
+  /** Host-specific props; slot/context cannot be overridden. */
+  componentProps?: Record<string, unknown>;
+  /** Preserve required host navigation if an optional component is unavailable. */
+  fallback?: ReactNode;
 };
 
 /**
@@ -829,6 +835,8 @@ export function PluginSlotMount({
   context,
   className,
   missingBehavior = "hidden",
+  componentProps,
+  fallback,
 }: PluginSlotMountProps) {
   usePluginRegistrySubscription();
   const [, forceRerender] = useState(0);
@@ -852,6 +860,7 @@ export function PluginSlotMount({
   }, [component, slot.pluginId]);
 
   if (!component) {
+    if (fallback !== undefined) return fallback;
     if (missingBehavior === "hidden") return null;
     return (
       <div className={cn("rounded-md border border-dashed border-border px-2 py-1 text-xs text-muted-foreground", className)}>
@@ -861,15 +870,17 @@ export function PluginSlotMount({
   }
 
   if (component.kind === "react") {
-    const node = createElement(component.component, { slot, context });
+    const node = createElement(component.component, { ...componentProps, slot, context });
     return (
-      <PluginSlotErrorBoundary slot={slot} className={className}>
+      <PluginSlotErrorBoundary key={`${slot.pluginId}:${slot.pluginVersion}:${slot.id}`} slot={slot} className={className} fallback={fallback}>
         <PluginBridgeScope pluginId={slot.pluginId} context={context}>
           {className ? <div className={className}>{node}</div> : node}
         </PluginBridgeScope>
       </PluginSlotErrorBoundary>
     );
   }
+
+  if (componentProps && fallback !== undefined) return fallback;
 
   return (
     <PluginSlotErrorBoundary slot={slot} className={className}>
