@@ -53,6 +53,15 @@ import { buildNativeHeartbeatPreparationSpans } from "./native-run-trace.js";
 import { NativeRunnerOwnershipUnverifiedError } from "./native-runner-ownership.js";
 import type { AdapterRuntimeEvent } from "../../adapters/index.js";
 
+const githubAccess = vi.hoisted(() => ({
+  activate: vi.fn((_binding: { runId: string }) => vi.fn()),
+  stop: vi.fn(async () => undefined),
+  create: vi.fn(),
+}));
+vi.mock("./native-github-access.js", () => ({
+  createNativeGitHubAccess: githubAccess.create,
+}));
+
 type BackendFactoryOptions = {
   runnerInstanceId?: string;
   acpxRuntimeDirectory?: string;
@@ -6150,6 +6159,10 @@ describe("native warm session supervision", () => {
 
   it.each(
     [
+      ...[false, true].flatMap((local) => [true, false].map(brokerReady => ({
+        firstBroker: true, secondBroker: true, projectless: false, local, brokerReady,
+        firstMode: "managed", secondMode: "managed", managedGitHub: true,
+      }))),
       ...[
         { firstBroker: false, secondBroker: false },
         { firstBroker: false, secondBroker: true },
@@ -6213,10 +6226,12 @@ describe("native warm session supervision", () => {
       firstNetwork: "disabled",
       secondNetwork: "disabled",
       checkpointContract: "valid",
+      managedGitHub: false,
+      brokerReady: true,
       ...scenario,
     })),
   )(
-    "verifies a live warm owner before refreshing run authority (broker: $firstBroker -> $secondBroker, projectless: $projectless, local: $local, auth: $firstMode -> $secondMode, network: $firstNetwork -> $secondNetwork, checkpoint: $checkpointContract)",
+    "verifies a live warm owner before refreshing run authority (broker: $firstBroker -> $secondBroker, projectless: $projectless, local: $local, auth: $firstMode -> $secondMode, network: $firstNetwork -> $secondNetwork, checkpoint: $checkpointContract, managed access: $managedGitHub, broker ready: $brokerReady)",
     async ({
       firstBroker,
       secondBroker,
@@ -6227,10 +6242,18 @@ describe("native warm session supervision", () => {
       firstNetwork,
       secondNetwork,
       checkpointContract,
+      managedGitHub,
+      brokerReady,
     }) => {
+      githubAccess.create.mockReset().mockResolvedValue({
+        env: { PAPERCLIP_GITHUB_BROKER_TOKEN: "stable-session-capability" },
+        ready: brokerReady,
+        activate: githubAccess.activate.mockReset().mockImplementation(() => vi.fn()),
+        stop: githubAccess.stop.mockReset().mockResolvedValue(undefined),
+      });
       const replacesProvider =
-        firstBroker ||
-        secondBroker ||
+        !brokerReady ||
+        (!managedGitHub && (firstBroker || secondBroker)) ||
         firstMode !== secondMode ||
         firstNetwork !== secondNetwork;
       const stateBase = await mkdtemp(
@@ -6337,7 +6360,7 @@ describe("native warm session supervision", () => {
               // the undefined value when a live owner is reused without a load.
               expect(options.persistedSession).toBeNull();
             }
-          } else {
+          } else if (!managedGitHub) {
             expect(options.existingSession).toBe(firstSession);
             expect(options.persistedSession).toBeUndefined();
           }
@@ -6357,6 +6380,7 @@ describe("native warm session supervision", () => {
           },
           runnerInstanceId: "runner-runnerd-warm",
           useRunnerd: true,
+          managedGitHub,
           runnerExecutionTarget: remoteTarget,
         });
         if (projectless && replacesProvider) {
@@ -6451,8 +6475,21 @@ describe("native warm session supervision", () => {
           },
           runnerInstanceId: "runner-runnerd-warm",
           useRunnerd: true,
+          managedGitHub,
           runnerExecutionTarget: remoteTarget,
         });
+        if (managedGitHub) {
+          expect(state.execute.mock.calls[1]?.[0].existingSession).toBe(brokerReady ? firstSession : undefined);
+          expect(githubAccess.create).toHaveBeenCalledTimes(brokerReady ? 1 : 2);
+          expect(githubAccess.activate.mock.calls.map(([binding]) => binding.runId))
+            .toEqual([first.binding.runId, second.binding.runId]);
+          // Replacement fixture publishes no new provider handle: both the old
+          // owner and the unclaimed replacement broker must be cleaned up.
+          expect(githubAccess.stop).toHaveBeenCalledTimes(brokerReady ? 0 : 2);
+          for (const activation of githubAccess.activate.mock.results) {
+            expect(activation.value).toHaveBeenCalledOnce();
+          }
+        }
         if (replacesProvider) {
           expect(firstClose).toHaveBeenCalledOnce();
           expect(firstClose).toHaveBeenCalledWith({
@@ -6469,6 +6506,7 @@ describe("native warm session supervision", () => {
               timeout: 1_500,
             },
           );
+          if (managedGitHub) expect(githubAccess.stop).toHaveBeenCalledOnce();
         }
       } finally {
         if (previousStateDirectory === undefined) {

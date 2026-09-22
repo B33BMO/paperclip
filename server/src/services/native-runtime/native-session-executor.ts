@@ -1,3 +1,5 @@
+import { createNativeGitHubAccess, type NativeGitHubAccess } from "./native-github-access.js";
+import { resolveGitHubOperationCredentials } from "../github-operation-credentials.js";
 import { bindManagedNativeCredentialTurn, completeManagedNativeCredentialTurn } from "./managed-native-credentials.js";
 import { createLocalNativeQuestionBridge } from "./local-native-question-bridge.js";
 import { readVerifiedRemoteWorkspaceFile } from "./remote-deliverable-file.js";
@@ -376,6 +378,7 @@ function clearNativeRuntimeRequestResolutions(runId: string): void {
 type WarmNativeSession = {
   managedAiCredentialIdentity?: string;
   credentialRunId?: string;
+  githubAccess?: NativeGitHubAccess;
   githubAuthenticationMode?: string;
   networkAccess: boolean;
   session: NativeSession;
@@ -388,6 +391,13 @@ type WarmNativeSession = {
   idleTimer: ReturnType<typeof setTimeout> | null;
   lastActivityAt: string;
 };
+
+async function closeWarmNativeSession(entry: WarmNativeSession, reason: string) {
+  // Revoke before awaiting process retirement/checkpoint IO.
+  const stopping = entry.githubAccess?.stop();
+  try { await entry.session.close({ reason }); }
+  finally { await stopping; }
+}
 
 const warmNativeSessions = new Map<string, WarmNativeSession>();
 // Closing a remote owner saves its checkpoint asynchronously. A new turn must
@@ -444,7 +454,7 @@ async function closeIdleWarmNativeSessions(input: {
     // adopt a session whose transport is already shutting down.
     warmNativeSessions.delete(sessionId);
     const closing = Promise.resolve().then(() =>
-      entry.session.close({ reason: input.reason }),
+      closeWarmNativeSession(entry, input.reason),
     );
     closingWarmNativeSessions.set(sessionId, closing);
     try {
@@ -5825,9 +5835,8 @@ async function releaseWarmNativeSession(
   if (entry.idleTimer !== null) clearTimeout(entry.idleTimer);
   if (failed || entry.closeOnReleaseReason !== undefined) {
     warmNativeSessions.delete(sessionId);
-    const closing = entry.session.close({
-      reason: entry.closeOnReleaseReason ?? "warm native session failed",
-    });
+    const closing = closeWarmNativeSession(entry,
+      entry.closeOnReleaseReason ?? "warm native session failed");
     // Restart checkpointing is required to restore this successful session.
     // Surface failure instead of reporting a clean release without authority.
     if (entry.closeOnReleaseReason !== undefined) await closing;
@@ -5840,8 +5849,7 @@ async function releaseWarmNativeSession(
     // is the idle timer's ownership fence across a later warm acquisition.
     if (current !== entry || current.busy) return;
     warmNativeSessions.delete(sessionId);
-    void current.session
-      .close({ reason: "warm native session idle timeout" })
+    void closeWarmNativeSession(current, "warm native session idle timeout")
       .catch(() => undefined);
   }, idleTimeoutMs);
   entry.idleTimer.unref();
@@ -7063,6 +7071,8 @@ export async function executePaperclipNativeSession(input: {
   sessionGoalControl?: NativeSessionGoalControl | null;
   resumeSessionGoalHeartbeat?: boolean;
   preparationSpans?: NativeRunHistoricalSpan[];
+  /** Use a session-owned GitHub broker, rebound only after run ownership is acquired. */
+  managedGitHub?: boolean;
   /** Resolved adapter env; the runner transport applies a provider allowlist before spawn. */
   runnerEnvironment?: NodeJS.ProcessEnv;
   /** Private grant materialization; never a user-configured host path. */
@@ -7913,14 +7923,16 @@ async function executePaperclipNativeSessionWithinScope(
   );
   let existingWarmSession: NativeSession | undefined;
   let managedCredentialSession: NativeSession | undefined;
+  let githubAccess: NativeGitHubAccess | undefined;
+  let releaseGitHubRun: (() => void) | undefined;
   let persistedWarmSession: PersistedNativeSession | null | undefined;
   if (warmSessionId !== null && warmConfigDigest !== null) {
     const entry = warmNativeSessions.get(warmSessionId);
     if (entry) {
-      // Run-scoped broker capabilities must rotate with the process, while the
-      // settled provider checkpoint retains the conversation across runs.
+      // Old run-scoped environments still require process replacement. A
+      // session-owned broker can change run authority without replacing it.
       const hasBrokerCapability = Boolean(
-        input.runnerEnvironment?.PAPERCLIP_GITHUB_BROKER_TOKEN,
+        !input.managedGitHub && input.runnerEnvironment?.PAPERCLIP_GITHUB_BROKER_TOKEN,
       );
       const credentialRunChanged =
         Boolean(entry.credentialRunId) !== hasBrokerCapability ||
@@ -7930,6 +7942,8 @@ async function executePaperclipNativeSessionWithinScope(
         entry.configDigest !== warmConfigDigest ||
         entry.managedAiCredentialIdentity !== input.managedAiCredentialIdentity ||
         credentialRunChanged ||
+        Boolean(entry.githubAccess) !== Boolean(input.managedGitHub) ||
+        entry.githubAccess?.ready === false ||
         entry.githubAuthenticationMode !==
           input.runnerEnvironment?.PAPERCLIP_GITHUB_AUTH_MODE ||
         entry.networkAccess !==
@@ -7939,9 +7953,7 @@ async function executePaperclipNativeSessionWithinScope(
         if (entry.busy) throw new Error("native_session_supervisor_busy");
         if (entry.idleTimer !== null) clearTimeout(entry.idleTimer);
         warmNativeSessions.delete(warmSessionId);
-        await entry.session.close({
-          reason: "warm native session configuration changed",
-        });
+        await closeWarmNativeSession(entry, "warm native session configuration changed");
         persistedWarmSession = loadWarmNativeCheckpoint(
           input.execution,
           warmConfigDigest,
@@ -7956,6 +7968,7 @@ async function executePaperclipNativeSessionWithinScope(
         if (entry.idleTimer !== null) clearTimeout(entry.idleTimer);
         entry.idleTimer = null;
         existingWarmSession = entry.session;
+        githubAccess = entry.githubAccess;
       }
     } else {
       persistedWarmSession = loadWarmNativeCheckpoint(
@@ -8068,6 +8081,18 @@ async function executePaperclipNativeSessionWithinScope(
     controller,
   });
   try {
+    if (input.managedGitHub) {
+      githubAccess ??= await createNativeGitHubAccess({
+        scope: input.execution.binding,
+        target: input.runnerExecutionTarget,
+        cwd: input.execution.workspace.cwd,
+        env: input.runnerEnvironment ?? process.env,
+        resolveCredentials: (binding) => resolveGitHubOperationCredentials(input.db, binding),
+        onLog: input.onLog,
+      });
+      releaseGitHubRun = githubAccess.activate(input.execution.binding);
+      input = { ...input, runnerEnvironment: { ...input.runnerEnvironment, ...githubAccess.env } };
+    }
     const expectedCurrentWakeComments = await resolveCurrentWakeCommentsBinding(
       input.db,
       input.execution.binding,
@@ -8269,7 +8294,8 @@ async function executePaperclipNativeSessionWithinScope(
                     networkAccess:
                       input.runnerEnvironment
                         ?.PAPERCLIP_RUNNER_NETWORK_ACCESS === "enabled",
-                    credentialRunId: input.runnerEnvironment
+                    githubAccess,
+                    credentialRunId: !input.managedGitHub && input.runnerEnvironment
                       ?.PAPERCLIP_GITHUB_BROKER_TOKEN
                       ? input.execution.binding.runId
                       : undefined,
@@ -8822,6 +8848,13 @@ async function executePaperclipNativeSessionWithinScope(
       // heartbeat to release the retained process or its task ownership.
       if (ownershipUnverified) throw new NativeRunnerOwnershipUnverifiedError();
       if (protocolIntegrityFailure !== null) throw protocolIntegrityFailure;
+    }
+  } finally {
+    releaseGitHubRun?.();
+    // A startup failure or onSession(null) must not leak a transport. A warm
+    // owner retains only the inactive broker until its normal retirement.
+    if (githubAccess && (!warmSessionId || warmNativeSessions.get(warmSessionId)?.githubAccess !== githubAccess)) {
+      await githubAccess.stop();
     }
   }
   if (

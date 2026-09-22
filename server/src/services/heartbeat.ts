@@ -24031,173 +24031,129 @@ export function heartbeatService(
                 nativeDispatchAtMs,
               }),
             );
-            // Native Git/gh uses the same authenticated remote callback
-            // transport as managed adapters. A bridge failure must not make
-            // GitHub a prerequisite for otherwise unrelated native work.
-            let nativeGitHubBridge: Awaited<
-              ReturnType<typeof startAdapterExecutionTargetPaperclipBridge>
-            > = null;
-            if (
-              executionTarget?.kind === "remote" &&
-              adapterEnv.PAPERCLIP_GITHUB_BROKER_TOKEN
-            ) {
-              try {
-                nativeGitHubBridge =
-                  await startAdapterExecutionTargetPaperclipBridge({
-                    runId: run.id,
-                    target: executionTarget,
-                    runtimeRootDir: path.posix.join(
-                      executionTarget.remoteCwd,
-                      ".paperclip-runtime",
-                      "github",
-                      run.id,
-                    ),
-                    adapterKey: "native-github",
-                    hostApiToken: adapterEnv.PAPERCLIP_GITHUB_BROKER_TOKEN,
-                    hostApiUrl: adapterEnv.PAPERCLIP_GITHUB_BROKER_URL,
+            const guardedDispatch =
+              await dispatchResolvedInteractionContinuationWithAtomicGate(
+                (markDispatchStarted) =>
+                  executePaperclipNativeSession({
+                    db,
+                    execution: nativeExecution,
+                    conversationMode: isConversation(issueContext),
+                    turnTimeoutMs: Math.max(0, asNumber(runtimeConfig.timeoutSec, 0)) * 1_000,
+                    runnerInstanceId: nativeRunnerInstanceId,
+                    leaseOwner: runOptions.nativeLeaseOwner,
+                    restartRecovery: runOptions.nativeRestartRecovery,
+                    backend:
+                      options.nativeSessionBackendFactory?.(nativeExecution),
+                    useRunnerd: agent.adapterType === "paperclip_runner",
+                    adapterType: agent.adapterType,
+                    sessionGoalControl,
+                    resumeSessionGoalHeartbeat:
+                      context.resumeSessionGoalHeartbeat === true ||
+                      completedGoalControl,
+                    onGoalCheckpoint: async (snapshot) => {
+                      if (!taskKey) return;
+                      const params =
+                        attachPaperclipSessionMetadataToSessionParams(
+                          {
+                            ...runtimeSessionParamsForAdapter,
+                            sessionId: snapshot.identity.sessionId,
+                            cwd: executionWorkspace.cwd,
+                          },
+                          configuredModel,
+                          sessionConfigMetadata,
+                        )!;
+                      const displayId =
+                        snapshot.providerSessionId ?? snapshot.sessionId;
+                      await upsertTaskSession({
+                        companyId: agent.companyId,
+                        agentId: agent.id,
+                        adapterType: agent.adapterType,
+                        taskKey,
+                        sessionParamsJson: params,
+                        sessionDisplayId: displayId,
+                        lastRunId: run.id,
+                        lastError: null,
+                      });
+                      goalCheckpointSession.current = { params, displayId };
+                    },
                     onLog,
-                  });
-              } catch {
-                await onLog(
-                  "stderr",
-                  "[paperclip] GitHub runtime transport unavailable; continuing without managed GitHub access.\n",
-                );
-              }
-            }
-            try {
-              const guardedDispatch =
-                await dispatchResolvedInteractionContinuationWithAtomicGate(
-                  (markDispatchStarted) =>
-                    executePaperclipNativeSession({
-                      db,
-                      execution: nativeExecution,
-                      conversationMode: isConversation(issueContext),
-                      turnTimeoutMs: Math.max(0, asNumber(runtimeConfig.timeoutSec, 0)) * 1_000,
-                      runnerInstanceId: nativeRunnerInstanceId,
-                      leaseOwner: runOptions.nativeLeaseOwner,
-                      restartRecovery: runOptions.nativeRestartRecovery,
-                      backend:
-                        options.nativeSessionBackendFactory?.(nativeExecution),
-                      useRunnerd: agent.adapterType === "paperclip_runner",
-                      adapterType: agent.adapterType,
-                      sessionGoalControl,
-                      resumeSessionGoalHeartbeat:
-                        context.resumeSessionGoalHeartbeat === true ||
-                        completedGoalControl,
-                      onGoalCheckpoint: async (snapshot) => {
-                        if (!taskKey) return;
-                        const params =
-                          attachPaperclipSessionMetadataToSessionParams(
-                            {
-                              ...runtimeSessionParamsForAdapter,
-                              sessionId: snapshot.identity.sessionId,
-                              cwd: executionWorkspace.cwd,
-                            },
-                            configuredModel,
-                            sessionConfigMetadata,
-                          )!;
-                        const displayId =
-                          snapshot.providerSessionId ?? snapshot.sessionId;
-                        await upsertTaskSession({
-                          companyId: agent.companyId,
-                          agentId: agent.id,
-                          adapterType: agent.adapterType,
-                          taskKey,
-                          sessionParamsJson: params,
-                          sessionDisplayId: displayId,
-                          lastRunId: run.id,
-                          lastError: null,
-                        });
-                        goalCheckpointSession.current = { params, displayId };
-                      },
-                      onLog,
-                      onEvent: onAdapterEvent,
-                      preparationSpans: nativeRunnerPreparationSpans,
-                      // Bootstrap with executable/home discovery while keeping
-                      // configured provider values and the server-selected
-                      // workspace boundary authoritative.
-                      managedAiCredentialIdentity: managedAiRuntime?.identity,
-                      managedAiCredentialHome: managedAiRuntime ? String((managedAiRuntime.config.env as Record<string, unknown>).CODEX_HOME) : undefined,
-                      runnerEnvironment: {
-                        ...buildNativeProviderEnvironment(
-                          adapterEnv,
-                          process.env,
-                          executionWorkspace.cwd,
-                        ),
-                        ...(nativeGitHubBridge
-                          ? {
-                              PAPERCLIP_GITHUB_BROKER_URL:
-                                nativeGitHubBridge.env.PAPERCLIP_API_URL,
-                              PAPERCLIP_GITHUB_BRIDGE_TOKEN:
-                                nativeGitHubBridge.env.PAPERCLIP_API_KEY,
-                            }
-                          : {}),
-                        ...(nativeMcpServer
-                          ? {
-                              PAPERCLIP_NATIVE_MCP_NAME: nativeMcpServer.name,
-                              PAPERCLIP_NATIVE_MCP_URL: nativeMcpServer.url,
-                              PAPERCLIP_NATIVE_MCP_TOKEN: nativeMcpServer.token,
-                            }
-                          : {}),
-                        ...(providerTraceCapture
-                          ? {
-                              PAPERCLIP_PROVIDER_TRACE_PATH:
-                                providerTraceCapture.path,
-                              PAPERCLIP_PROVIDER_TRACE_MAX_BYTES: String(
-                                PROVIDER_TRACE_MAX_BYTES,
-                              ),
-                            }
-                          : {}),
-                      },
-                      runnerExecutionTarget: executionTarget,
-                      runnerIngressAuthorized: isRunnerIngressAuthorized(
-                        nativeRuntimeResolution,
+                    onEvent: onAdapterEvent,
+                    preparationSpans: nativeRunnerPreparationSpans,
+                    // Bootstrap with executable/home discovery while keeping
+                    // configured provider values and the server-selected
+                    // workspace boundary authoritative.
+                    managedGitHub: !useHostGitHub && githubSelection.configured,
+                    managedAiCredentialIdentity: managedAiRuntime?.identity,
+                    managedAiCredentialHome: managedAiRuntime ? String((managedAiRuntime.config.env as Record<string, unknown>).CODEX_HOME) : undefined,
+                    runnerEnvironment: {
+                      ...buildNativeProviderEnvironment(
+                        adapterEnv,
+                        process.env,
+                        executionWorkspace.cwd,
                       ),
-                      runnerPublicUrl:
-                        runtimeEnv.PAPERCLIP_RUNNER_PUBLIC_URL?.trim() || null,
-                      runnerCaBundlePath:
-                        runtimeEnv.PAPERCLIP_RUNNER_CA_BUNDLE_PATH?.trim() ||
-                        null,
-                      runnerRemoteBinaryPath:
-                        runtimeEnv.PAPERCLIP_RUNNER_REMOTE_BINARY_PATH?.trim() ||
-                        null,
-                      runnerRemoteCodexPath:
-                        runtimeEnv.PAPERCLIP_RUNNER_REMOTE_CODEX_PATH?.trim() ||
-                        null,
-                      runnerRemoteCodexNpmSpec:
-                        runtimeEnv.PAPERCLIP_RUNNER_REMOTE_CODEX_NPM_SPEC?.trim() ||
-                        null,
-                      runnerRemoteProviderPackPath:
-                        runtimeEnv.PAPERCLIP_RUNNER_REMOTE_PROVIDER_PACK_PATH?.trim() ||
-                        null,
-                      stopTaskForReassignment: async (target) => {
-                        await settleLiveRunnerGoalBeforeInterrupt(db, target);
-                        if (!target.runId) return;
-                        const prior = await getRun(target.runId);
-                        if (!prior || prior.companyId !== target.companyId || prior.agentId !== target.agentId) {
-                          throw conflict("Reassignment run binding changed");
-                        }
-                        const stopped = await cancelRunInternal(target.runId, "Cancelled for task reassignment", {
-                          errorCode: "issue_reassigned", suppressImmediateRecovery: true,
-                          resultJson: { reassignmentStopConfirmed: true },
-                        });
-                        if (stopped && ["running", "queued", "scheduled_retry"].includes(stopped.status)) {
-                          throw conflict("The previous run did not stop; reassignment was not applied");
-                        }
-                      },
-                      enqueueWakeup,
-                      onSpawn: async (meta) => {
-                        markDispatchStarted();
-                        await persistRunProcessMetadata(run.id, meta);
-                      },
-                    }),
-                );
-              if (!guardedDispatch.dispatched) return;
-              nativeDispatchStarted = true;
-              adapterResult = await guardedDispatch.resultPromise;
-            } finally {
-              await nativeGitHubBridge?.stop();
-            }
+                      ...(nativeMcpServer
+                        ? {
+                            PAPERCLIP_NATIVE_MCP_NAME: nativeMcpServer.name,
+                            PAPERCLIP_NATIVE_MCP_URL: nativeMcpServer.url,
+                            PAPERCLIP_NATIVE_MCP_TOKEN: nativeMcpServer.token,
+                          }
+                        : {}),
+                      ...(providerTraceCapture
+                        ? {
+                            PAPERCLIP_PROVIDER_TRACE_PATH:
+                              providerTraceCapture.path,
+                            PAPERCLIP_PROVIDER_TRACE_MAX_BYTES: String(
+                              PROVIDER_TRACE_MAX_BYTES,
+                            ),
+                          }
+                        : {}),
+                    },
+                    runnerExecutionTarget: executionTarget,
+                    runnerIngressAuthorized: isRunnerIngressAuthorized(
+                      nativeRuntimeResolution,
+                    ),
+                    runnerPublicUrl:
+                      runtimeEnv.PAPERCLIP_RUNNER_PUBLIC_URL?.trim() || null,
+                    runnerCaBundlePath:
+                      runtimeEnv.PAPERCLIP_RUNNER_CA_BUNDLE_PATH?.trim() ||
+                      null,
+                    runnerRemoteBinaryPath:
+                      runtimeEnv.PAPERCLIP_RUNNER_REMOTE_BINARY_PATH?.trim() ||
+                      null,
+                    runnerRemoteCodexPath:
+                      runtimeEnv.PAPERCLIP_RUNNER_REMOTE_CODEX_PATH?.trim() ||
+                      null,
+                    runnerRemoteCodexNpmSpec:
+                      runtimeEnv.PAPERCLIP_RUNNER_REMOTE_CODEX_NPM_SPEC?.trim() ||
+                      null,
+                    runnerRemoteProviderPackPath:
+                      runtimeEnv.PAPERCLIP_RUNNER_REMOTE_PROVIDER_PACK_PATH?.trim() ||
+                      null,
+                    stopTaskForReassignment: async (target) => {
+                      await settleLiveRunnerGoalBeforeInterrupt(db, target);
+                      if (!target.runId) return;
+                      const prior = await getRun(target.runId);
+                      if (!prior || prior.companyId !== target.companyId || prior.agentId !== target.agentId) {
+                        throw conflict("Reassignment run binding changed");
+                      }
+                      const stopped = await cancelRunInternal(target.runId, "Cancelled for task reassignment", {
+                        errorCode: "issue_reassigned", suppressImmediateRecovery: true,
+                        resultJson: { reassignmentStopConfirmed: true },
+                      });
+                      if (stopped && ["running", "queued", "scheduled_retry"].includes(stopped.status)) {
+                        throw conflict("The previous run did not stop; reassignment was not applied");
+                      }
+                    },
+                    enqueueWakeup,
+                    onSpawn: async (meta) => {
+                      markDispatchStarted();
+                      await persistRunProcessMetadata(run.id, meta);
+                    },
+                  }),
+              );
+            if (!guardedDispatch.dispatched) return;
+            nativeDispatchStarted = true;
+            adapterResult = await guardedDispatch.resultPromise;
           } else {
             const interactionId = readNonEmptyString(context.interactionId);
             const legacyQuestionResponse =
