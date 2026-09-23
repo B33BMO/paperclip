@@ -2,6 +2,10 @@ import { isRemoteMcpConnectorMethod, connectionPurposeTransportSchema } from "@p
 import { instanceSettingsService } from "./instance-settings.js";
 import { githubBotRequest } from "./chat-github-client.js";
 import { syncConnectionCredentialBindings } from "./connection-credential-bindings.js";
+import {
+  emitConnectionCreated,
+  emitConnectionUpdated,
+} from "./connector-telemetry.js";
 import { canBrowseProjectRepositoryGrant, mergeProjectRepository } from "./project-repositories.js";
 import { captureRunIdentity } from "./run-identity.js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -6415,6 +6419,7 @@ export function toolAccessService(
 
       return { connection: updatedConnection, applicationArchived };
     });
+    emitConnectionUpdated(archived.connection, connection, "archive");
 
     // Only now, with every access path closed, revoke the credentials. Each
     // `secrets.remove` marks the row deleted before it calls the provider, so a
@@ -8017,6 +8022,7 @@ export function toolAccessService(
       await ensureDefaultOrganizationGrant(updated);
       await syncCredentialBindings(updated);
       await ensureRuntimeSlot(updated);
+      emitConnectionUpdated(updated, existing, "example");
       return { row: updated, created: false };
     }
     const connectionId = randomUUID();
@@ -8045,6 +8051,7 @@ export function toolAccessService(
     await ensureDefaultOrganizationGrant(created);
     await syncCredentialBindings(created);
     await ensureRuntimeSlot(created);
+    emitConnectionCreated(created, "example");
     return { row: created, created: true };
   }
 
@@ -10387,7 +10394,10 @@ export function toolAccessService(
         ),
       )
       .returning();
-    if (updated) await syncCredentialBindings(updated);
+    if (updated) {
+      await syncCredentialBindings(updated);
+      emitConnectionUpdated(updated, connection, "credential_refresh");
+    }
     return updated ?? null;
   }
 
@@ -11275,6 +11285,11 @@ export function toolAccessService(
                 )
                 .returning();
               await syncCredentialBindings(reauthorizationRequired);
+              emitConnectionUpdated(
+                reauthorizationRequired,
+                latestConnection,
+                "credential_refresh",
+              );
             } else {
               const activeGrantRefs = await db
                 .select({
@@ -12724,6 +12739,15 @@ export function toolAccessService(
           })
           .returning();
       }
+      if (revivedConnectionPrevious) {
+        emitConnectionUpdated(
+          connectionRow,
+          revivedConnectionPrevious,
+          "gallery",
+        );
+      } else {
+        emitConnectionCreated(connectionRow, "gallery");
+      }
       if (personalIdentityUserId) {
         // "Just me" (PAP-17835 seam #4). The credential is committed straight to
         // the caller's own grant; the connection row keeps only the header
@@ -13749,6 +13773,11 @@ export function toolAccessService(
 
       return { profileId, profileBindings, policies, updatedConnection };
     });
+    emitConnectionUpdated(
+      transactionResult.updatedConnection,
+      connection,
+      "gallery",
+    );
 
     const details = await profileDetails(
       transactionResult.profileId,
@@ -14859,6 +14888,10 @@ export function toolAccessService(
       stateRow.connectionId,
       stateRow.companyId,
     );
+    const preCloudCallbackLifecycle = {
+      status: connection.status,
+      enabled: connection.enabled,
+    };
     // The connection lifecycle, not the incidental presence of its app profile,
     // distinguishes setup from reauthorization. New connections and connections
     // revived after removal are drafts until this callback completes. A profile
@@ -15220,6 +15253,10 @@ export function toolAccessService(
           .where(eq(issueThreadInteractions.id, stateRow.interactionId));
       }
     });
+    // The transaction above committed the connection's lifecycle write; a
+    // Paperclip Cloud connector callback is the managed variant of an OAuth
+    // callback completion.
+    emitConnectionUpdated(connection, preCloudCallbackLifecycle, "oauth_callback");
     if (githubMetadata) {
       const [githubGrant] = await db
         .select({ id: connectionGrants.id })
@@ -15452,6 +15489,10 @@ export function toolAccessService(
             : null,
       });
     }
+    const preActivationLifecycle = {
+      status: connection.status,
+      enabled: connection.enabled,
+    };
     [connection] = await db
       .update(toolConnections)
       .set({
@@ -15468,6 +15509,11 @@ export function toolAccessService(
         ),
       )
       .returning();
+    emitConnectionUpdated(
+      connection,
+      preActivationLifecycle,
+      "oauth_callback",
+    );
     await db
       .update(toolApplications)
       .set({ status: "active", updatedAt: now() })
@@ -15566,6 +15612,10 @@ export function toolAccessService(
     // Reauthorization refreshes credentials and catalog without rebuilding the
     // operator's action profile, policy rules, or access bindings.
     const shouldFinalizeDefaults = connection.status === "draft";
+    const preCallbackLifecycle = {
+      status: connection.status,
+      enabled: connection.enabled,
+    };
     const sourceTemplateKey =
       typeof connection.config.sourceTemplateKey === "string"
         ? connection.config.sourceTemplateKey
@@ -15841,6 +15891,11 @@ export function toolAccessService(
           tx,
         );
       });
+      emitConnectionUpdated(
+        connection,
+        preCallbackLifecycle,
+        "oauth_callback",
+      );
 
       // Personal OAuth used to return immediately after saving the grant. That
       // left the connection draft/paused and its catalog empty, so the person
@@ -16059,6 +16114,11 @@ export function toolAccessService(
       await ensureDefaultOrganizationGrant(connection, tx);
       await syncCredentialBindings(connection, [], tx);
     });
+    emitConnectionUpdated(
+      connection,
+      preCallbackLifecycle,
+      "oauth_callback",
+    );
 
     await checkConnectionHealth(connection.id, input.actor);
     const refresh = await refreshCatalog(connection.id, input.actor, {
@@ -16115,6 +16175,10 @@ export function toolAccessService(
     if (requestingAgentId)
       await assertAgentsInCompany(companyId, [requestingAgentId]);
     let connection = await getConnectionRow(connectionId, companyId);
+    const preFinalizeLifecycle = {
+      status: connection.status,
+      enabled: connection.enabled,
+    };
     if (connection.authKind !== "oauth")
       throw badRequest("This connection does not use browser sign-in");
     if (connection.status === "archived")
@@ -16424,6 +16488,12 @@ export function toolAccessService(
       for (const secretId of personalSecretIds) await secrets.remove(secretId);
     }
 
+    // Both identity branches above commit their own lifecycle write (draft ->
+    // active) before `finishGalleryAppConnection` re-reads the row, so that
+    // step alone would never observe this transition. This is the OAuth
+    // access-finalization step of the same gallery setup flow (Apps and inline
+    // task cards both reach it), hence `gallery`.
+    emitConnectionUpdated(connection, preFinalizeLifecycle, "gallery");
     const catalog = await db
       .select()
       .from(toolCatalogEntries)
@@ -17349,6 +17419,7 @@ export function toolAccessService(
       await ensureDefaultOrganizationGrant(row);
       await syncCredentialBindings(row);
       await ensureRuntimeSlot(row);
+      emitConnectionCreated(row, "api");
       return toConnection(row);
     },
 
@@ -18239,6 +18310,7 @@ export function toolAccessService(
         .returning();
       await syncCredentialBindings(row);
       await ensureRuntimeSlot(row);
+      emitConnectionUpdated(row, existing, "api");
       return toConnection(row);
     },
 
