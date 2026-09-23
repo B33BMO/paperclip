@@ -2,7 +2,7 @@
 
 This image is the Paperclip Cloud fleet sandbox image plus a source-built
 `paperclip-runnerd` and immutable provider pack. The pack contains Node 24.11,
-OpenCode 1.18.29, the compiled OpenCode proxy, ACPX 0.13.1 sidecar, qualified ACP
+OpenCode 1.18.32, the compiled OpenCode proxy, ACPX 0.13.1 sidecar, qualified ACP
 agents, and the production lockfile. Its manifest digests each executable bridge
 and binds the pack to the runner source revision, avoiding artifact upload and
 npm installation on every fresh lease.
@@ -12,7 +12,33 @@ The fleet pins are intentionally copied from
 Update both definitions together until the fleet base is published as a stable
 image that this Dockerfile can extend directly.
 
+## Harness versions
+
+The September 22, 2026 refresh pins Codex 0.156.0, Claude Agent SDK
+0.3.280 (Claude Code 2.1.280), and OpenCode 1.18.32 in the shared provider
+pack. Claude Code 2.1.280 is the minimum for
+[Opus 5.5](https://code.claude.com/docs/en/model-config); it also supports
+Fable 5.1. Codex uses the current
+[GPT-6 Sol and Luna model IDs](https://learn.chatgpt.com/docs/models).
+Grok CLI 1.0.41 supports the current
+[Grok 4.7](https://docs.x.ai/developers/grok-4-7) model family.
+
+Keep the patched ACP bridge versions separate from their CLI runtime pins.
+Their executable digests do not change when only the runtime dependency
+changes. Refresh the runtime executable digests from integrity-verified npm
+release archives for every supported platform, and keep the native runner,
+provider manifest, and remote controller version checks aligned.
+
 ## Build and verify
+
+Run `pnpm --filter @paperclipai/paperclip-runner test:opencode:qualification`
+after installing dependencies to exercise the actual pinned OpenCode executable.
+It checks health/version, session creation and retrieval, SSE messages, an async
+prompt, and session deletion against a loopback mock provider. It uses an
+isolated home, starts no paid model request, and retires its process group.
+Set `PAPERCLIP_TEST_OPENCODE_BINARY` to the materialized Linux executable when
+qualifying an assembled provider pack.
+
 
 The fleet image is currently amd64-only because the pinned Cursor and GitHub CLI
 checksums cover amd64.
