@@ -116,6 +116,13 @@ export const INSTANCE_FEATURE_CATALOG: Record<InstanceFeatureKey, FeatureCatalog
     cloudDefault: false,
     selfHostedDefault: false,
   },
+  enableMemoryConnectors: {
+    title: "Memory connectors",
+    description: "Show experimental Mem0, Zep, Supermemory, Cognee, and Honcho setup. Existing connections keep running when hidden.",
+    tier: "managed",
+    cloudDefault: false,
+    selfHostedDefault: false,
+  },
   enableMcpAggregators: {
     title: "MCP aggregators",
     description:

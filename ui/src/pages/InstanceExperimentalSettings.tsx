@@ -445,6 +445,18 @@ export function InstanceExperimentalSettings() {
         />
 
         <ExperimentalToggleCard
+          title="Memory connectors"
+          description="Connect Mem0, Zep, Supermemory, Cognee, and Honcho for long-term memory and context."
+          footnote="Turning this off hides setup for these connectors. Existing connections keep running."
+          checked={experimentalQuery.data?.enableMemoryConnectors === true}
+          onCheckedChange={(checked) => toggleMutation.mutate({ enableMemoryConnectors: checked })}
+          disabled={toggleMutation.isPending}
+          settingKey="enableMemoryConnectors"
+          managed={managedKeys.enableMemoryConnectors}
+          ariaLabel="Toggle memory connectors experimental setting"
+        />
+
+        <ExperimentalToggleCard
           title="Paperclip Runner"
           description="Allow new Codex agents to select the experimental Rust Paperclip Runner, including authenticated runner ingress when a sandbox requires it. Onboarding continues to use legacy adapters. Turning this off hides the choice without affecting existing native runs."
           checked={enableNativeRunner}

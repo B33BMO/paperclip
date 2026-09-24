@@ -1,19 +1,19 @@
 {
   "schemaVersion": 1,
-  "slug": "mem0",
-  "name": "Mem0",
-  "description": "Remember preferences, conversations, events, and agent state.",
+  "slug": "honcho",
+  "name": "Honcho",
+  "description": "Remember conversations and retrieve context about peers.",
   "categories": [
     "ai"
   ],
   "featured": false,
   "branding": {
-    "logoUrl": "/brands/apps/mem0.svg"
+    "logoUrl": "/brands/apps/honcho.svg"
   },
   "urlPatterns": [
-    "https://mcp.mem0.ai/*"
+    "https://mcp.honcho.dev/*"
   ],
-  "docsUrl": "https://docs.mem0.ai/platform/mem0-mcp",
+  "docsUrl": "https://honcho.dev/docs/v3/guides/integrations/mcp",
   "methods": [
     {
       "key": "mcp-api-key",
@@ -24,18 +24,18 @@
       ],
       "whenToUse": "Use a restricted customer-owned key when browser sign-in is not suitable.",
       "defaults": {
-        "serverUrl": "https://mcp.mem0.ai/mcp/"
+        "serverUrl": "https://mcp.honcho.dev"
       },
-      "guidanceMd": "Open the Mem0 dashboard, create an API key for the account agents should use, and paste it below.",
+      "guidanceMd": "Open the Honcho dashboard, create an API key for the account agents should use, and paste it below.",
       "riskTier": "S3",
       "label": "Use an API key",
       "credentialFields": [
         {
           "key": "authorization",
-          "label": "Mem0 API key",
+          "label": "Honcho API key",
           "type": "password",
           "required": true,
-          "placeholder": "Paste your Mem0 API key",
+          "placeholder": "Paste your Honcho API key",
           "secret": true
         }
       ],
@@ -45,11 +45,11 @@
         "prefix": "Bearer "
       },
       "consoleLinks": {
-        "keys": "https://app.mem0.ai/dashboard/api-keys",
-        "docs": "https://docs.mem0.ai/platform/mem0-mcp"
+        "keys": "https://app.honcho.dev",
+        "docs": "https://honcho.dev/docs/v3/guides/integrations/mcp"
       },
       "warnings": [
-        "A Mem0 API key; the live server currently requires the slash-normalized endpoint."
+        "An API key from the Honcho dashboard. Memory is stored in your Honcho account; select workspace and peer identifiers when calling tools."
       ]
     }
   ]

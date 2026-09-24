@@ -73,6 +73,8 @@ export interface InstanceExperimentalSettings {
   enableChatConnectors: boolean;
   /** Exposes MCP aggregator setup; existing connections keep running when hidden. */
   enableMcpAggregators: boolean;
+  /** Show experimental memory connection setup. Existing connections remain usable. */
+  enableMemoryConnectors: boolean;
   enablePipelines: boolean;
   enableCases: boolean;
   enableAgentChat: boolean;

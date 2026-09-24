@@ -1,4 +1,5 @@
 import { publicChatTaskUrl } from "../chat-task-url.js";
+import type { createAssignedMcpTools } from "./assigned-mcp-tools.js";
 import { assertAssignableAgent } from "../agent-assignability.js";
 import { authorizationService } from "../authorization.js";
 import { handoffPlanContext } from "./handoff-plan-context.js";
@@ -104,6 +105,7 @@ type Binding = {
   storage?: StorageService;
   /** Server-owned suppression for baseline evals; true never overrides operator opt-in. */
   connectorAssignments?: ConnectorAssignment[];
+  assignedMcpTools?: Awaited<ReturnType<typeof createAssignedMcpTools>>;
   apiToolsEnabled?: boolean;
   workMode?: "standard" | "planning" | "ask";
   workspaceRoot?: string;
@@ -223,7 +225,7 @@ export class PaperclipRunnerToolAuthority {
     definitions.push(LIST_CHAT_ATTACHMENTS_TOOL_DEFINITION);
     definitions.push(REUSE_CHAT_ATTACHMENT_TOOL_DEFINITION);
     definitions.push(READ_CHAT_ATTACHMENT_TOOL_DEFINITION);
-    return [...RUNTIME_CONNECTION_TOOL_DEFINITIONS, ...(this.binding.connectorAssignments ?? []).flatMap((assignment) => assignment.tools), ...definitions];
+    return [...RUNTIME_CONNECTION_TOOL_DEFINITIONS, ...(this.binding.connectorAssignments ?? []).flatMap((assignment) => assignment.tools), ...(this.binding.assignedMcpTools?.definitions() ?? []), ...definitions];
   }
 
   async execute(call: {
@@ -236,6 +238,10 @@ export class PaperclipRunnerToolAuthority {
       if (!NATIVE_REVIEW_READ_TOOLS.has(call.tool)) {
         throw forbidden("This review run may only inspect the assigned task and resolve its review.");
       }
+    }
+    if (this.binding.assignedMcpTools?.has(call.tool)) {
+      const current = await this.#boundContext();
+      return this.binding.assignedMcpTools.execute(call, current.issue.workMode as "standard" | "planning" | "ask");
     }
     if (isConnectorTool(call.tool)) {
       if (!(this.binding.connectorAssignments ?? []).some((assignment) => assignment.tools.some((tool) => tool.name === call.tool))) throw forbidden("Connector tool is not available to this run");

@@ -80,6 +80,7 @@ function defaultExperimentalSettings(): InstanceExperimentalSettingsPayload {
     enableApps: true,
     enableChatConnectors: false,
     enableMcpAggregators: false,
+    enableMemoryConnectors: false,
     enablePipelines: false,
     enableCases: false,
     enableAgentChat: false,
@@ -209,6 +210,19 @@ describe("InstanceExperimentalSettings — Conference Room Chat card (PAP-11233)
 
     expect(container.querySelector('button[aria-label="Toggle apps experimental setting"]')).toBeNull();
     expect(container.textContent).not.toContain("Show the Apps navigation");
+  });
+
+  it("defaults memory connectors off and persists an explicit toggle in both directions", async () => {
+    await renderPage();
+    const selector = 'button[aria-label="Toggle memory connectors experimental setting"]';
+    expect(container.querySelector(selector)?.getAttribute("aria-checked")).toBe("false");
+    expect(container.textContent).toContain("Existing connections keep running.");
+    for (const enabled of [true, false]) {
+      await act(() => container.querySelector<HTMLButtonElement>(selector)!.click());
+      await flushReact();
+      expect(mockInstanceSettingsApi.updateExperimental).toHaveBeenLastCalledWith({ enableMemoryConnectors: enabled });
+      expect(container.querySelector(selector)?.getAttribute("aria-checked")).toBe(String(enabled));
+    }
   });
 
   it("defaults MCP aggregators off and persists an explicit toggle in both directions", async () => {
