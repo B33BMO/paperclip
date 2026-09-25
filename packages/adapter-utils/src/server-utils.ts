@@ -4793,6 +4793,10 @@ export async function runChildProcess(
 
         const stdin = child.stdin;
         if (opts.stdin != null && stdin) {
+          // A child that exits before reading its prompt (e.g. a sandbox that fails to start)
+          // closes the pipe; without a listener the EPIPE is unhandled and kills the server.
+          // The child's exit code still fails the run.
+          stdin.on("error", () => {});
           void spawnPersistPromise.finally(() => {
             if (child.killed || stdin.destroyed) return;
             stdin.write(opts.stdin as string);

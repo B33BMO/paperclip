@@ -83,6 +83,10 @@ async function pathExists(candidate: string): Promise<boolean> {
   return fs.lstat(candidate).then(() => true).catch(() => false);
 }
 
+async function isSymlink(candidate: string): Promise<boolean> {
+  return fs.lstat(candidate).then((stat) => stat.isSymbolicLink()).catch(() => false);
+}
+
 function parentDirectories(candidate: string): string[] {
   const directories: string[] = [];
   let current = path.dirname(candidate);
@@ -102,8 +106,13 @@ function addParentDirectories(args: string[], created: Set<string>, candidate: s
 }
 
 async function nearestPackageRoot(candidate: string): Promise<string> {
+  // Never climb to the user's home (or above it): a stray ~/package.json would otherwise
+  // expose the whole home directory -- ~/.ssh included -- to a standalone binary's sandbox.
+  const home = path.resolve(os.homedir());
   let current = path.dirname(candidate);
   while (current !== path.dirname(current)) {
+    const resolved = path.resolve(current);
+    if (resolved === home || home.startsWith(`${resolved}${path.sep}`)) break;
     if (await pathExists(path.join(current, "package.json"))) return current;
     current = path.dirname(current);
   }
@@ -402,7 +411,12 @@ export async function buildLocalProcessSandboxSpawnTarget(input: {
       mounted.add(normalized);
       created.add(normalized);
     };
-    for (const systemPath of SYSTEM_READ_PATHS) await mount(systemPath, "ro");
+    for (const systemPath of SYSTEM_READ_PATHS) {
+      // Merged-/usr hosts (/bin -> usr/bin) are covered by the symlinks above; binding the
+      // host symlink resolves to /usr/bin and fails on the not-yet-mounted /newroot/bin.
+      if (await isSymlink(systemPath)) continue;
+      await mount(systemPath, "ro");
+    }
     for (const executablePath of await executableReadPaths(input.executable)) await mount(executablePath, "ro");
     if (networkScope === "allowlist") {
       for (const nodePath of await executableReadPaths(process.execPath)) await mount(nodePath, "ro");

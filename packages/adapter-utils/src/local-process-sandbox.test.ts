@@ -103,6 +103,61 @@ describe("local process sandbox", () => {
     expect(target.args.slice(-3)).toEqual([process.execPath, "-e", "console.log('ok')"]);
   });
 
+  it.runIf(process.platform === "linux")("does not bind host symlinks such as a merged-/usr /bin", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-fs-mergedusr-"));
+    cleanup.push(root);
+    const workspace = path.join(root, "workspace");
+    await fs.mkdir(workspace);
+
+    const target = await buildLocalProcessSandboxSpawnTarget({
+      executable: process.execPath,
+      args: ["-e", "console.log('ok')"],
+      cwd: workspace,
+      options: { workspaceDir: workspace, filesystemScope: "workspace" },
+    });
+
+    for (const systemPath of ["/bin", "/sbin", "/lib", "/lib64"]) {
+      const isLink = await fs.lstat(systemPath).then((s) => s.isSymbolicLink()).catch(() => false);
+      if (!isLink) continue;
+      const boundAt = target.args.findIndex(
+        (arg, i) => arg === "--ro-bind" && target.args[i + 1] === systemPath && target.args[i + 2] === systemPath,
+      );
+      expect(boundAt, `${systemPath} is a host symlink and must not be bind-mounted`).toBe(-1);
+    }
+  });
+
+  it.runIf(process.platform === "linux")("never exposes the home directory as an executable's package root", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-fs-home-"));
+    cleanup.push(home);
+    const workspace = path.join(home, "workspace");
+    const binDir = path.join(home, ".local", "share", "tool", "versions");
+    await fs.mkdir(workspace);
+    await fs.mkdir(binDir, { recursive: true });
+    // A stray package.json in HOME must not turn HOME into the binary's package root.
+    await fs.writeFile(path.join(home, "package.json"), "{}");
+    const binary = path.join(binDir, "1.0.0");
+    await fs.writeFile(binary, "#!/bin/sh\n", { mode: 0o755 });
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      const target = await buildLocalProcessSandboxSpawnTarget({
+        executable: binary,
+        args: [],
+        cwd: workspace,
+        options: { workspaceDir: workspace, filesystemScope: "workspace" },
+      });
+      const boundAt = target.args.findIndex(
+        (arg, i) => arg === "--ro-bind" && target.args[i + 1] === home && target.args[i + 2] === home,
+      );
+      expect(boundAt).toBe(-1);
+      expect(target.args).toContain(binDir);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+    }
+  });
+
   it.runIf(process.platform === "linux")("binds a confined absolute alias to the synchronized workspace", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-fs-alias-"));
     cleanup.push(root);
