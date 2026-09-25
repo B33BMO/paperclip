@@ -58,6 +58,7 @@ const mockWorkspaceDiffReprojection = vi.hoisted(() => ({
 }));
 const mockLogActivity = vi.hoisted(() => vi.fn());
 const mockQueueRuntimeRequestResolution = vi.hoisted(() => vi.fn());
+const mockResolveClaudePermissionRequest = vi.hoisted(() => vi.fn());
 const mockAccessService = vi.hoisted(() => ({
   canUser: vi.fn(),
   decide: vi.fn(),
@@ -112,6 +113,13 @@ function registerModuleMocks() {
     projectCodexWorkspaceDiffsFromTrace: mockWorkspaceDiffReprojection.project,
     persistReprojectedWorkspaceDiffs: mockWorkspaceDiffReprojection.persist,
   }));
+
+  vi.doMock("../services/claude-permission-bridge.js", async () => {
+    const actual = await vi.importActual<typeof import("../services/claude-permission-bridge.js")>(
+      "../services/claude-permission-bridge.js",
+    );
+    return { ...actual, resolveClaudePermissionRequest: mockResolveClaudePermissionRequest };
+  });
 
   vi.doMock("../realtime/runner-prp-ws.js", async () => {
     const actual = await vi.importActual<typeof import("../realtime/runner-prp-ws.js")>(
@@ -1652,6 +1660,89 @@ describe("agent live run routes", () => {
         isInstanceAdmin: true,
       },
       resolution: { action: "accept" },
+    });
+  });
+
+  describe("Claude permission bridge requests on legacy runs", () => {
+    const runId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const bridgeCreated = {
+      eventType: "runtime_request.created",
+      payload: {
+        prpEvent: {
+          schema: "paperclip.prp.event.v1",
+          eventType: "runtime_request.created",
+          sourceKind: "paperclip_permission_bridge",
+          runId,
+          turnId: `claude-${runId}`,
+          payload: {
+            request: {
+              requestId: "perm-1",
+              requestKind: "permission_approval",
+              turnId: `claude-${runId}`,
+              status: "pending",
+            },
+          },
+        },
+      },
+    };
+    const admin = {
+      type: "board",
+      userId: "instance-admin",
+      companyIds: ["company-1"],
+      source: "session",
+      isInstanceAdmin: true,
+    } as const;
+
+    beforeEach(() => {
+      mockResolveClaudePermissionRequest.mockReset();
+      mockHeartbeatService.getRun.mockResolvedValue({
+        id: runId,
+        companyId: "company-1",
+        agentId: "agent-1",
+        status: "running",
+        runtimeMode: "legacy",
+      });
+    });
+
+    it("resolves an Allow once through the bridge, not the runner queue", async () => {
+      mockResolveClaudePermissionRequest.mockResolvedValue(true);
+      const app = await createApp(createRuntimeRequestDbStub(bridgeCreated), admin);
+      const res = await requestApp(app, (baseUrl) => request(baseUrl)
+        .post(`/api/heartbeat-runs/${runId}/runtime-requests/perm-1/resolve`)
+        .send({ resolution: { action: "accept" } }));
+
+      expect(res.status, JSON.stringify(res.body)).toBe(202);
+      expect(mockResolveClaudePermissionRequest).toHaveBeenCalledWith(expect.anything(), {
+        run: expect.objectContaining({ id: runId }),
+        requestId: "perm-1",
+        action: "accept",
+        resolvedByUserId: "instance-admin",
+      });
+      expect(mockQueueRuntimeRequestResolution).not.toHaveBeenCalled();
+      expect(mockLogActivity).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ action: "heartbeat.permission_request_resolved" }),
+      );
+    });
+
+    it("rejects a session-wide allow", async () => {
+      const app = await createApp(createRuntimeRequestDbStub(bridgeCreated), admin);
+      const res = await requestApp(app, (baseUrl) => request(baseUrl)
+        .post(`/api/heartbeat-runs/${runId}/runtime-requests/perm-1/resolve`)
+        .send({ resolution: { action: "accept_for_session" } }));
+
+      expect(res.status).toBe(400);
+      expect(mockResolveClaudePermissionRequest).not.toHaveBeenCalled();
+    });
+
+    it("reports a request another decision already closed as stale", async () => {
+      mockResolveClaudePermissionRequest.mockResolvedValue(false);
+      const app = await createApp(createRuntimeRequestDbStub(bridgeCreated), admin);
+      const res = await requestApp(app, (baseUrl) => request(baseUrl)
+        .post(`/api/heartbeat-runs/${runId}/runtime-requests/perm-1/resolve`)
+        .send({ resolution: { action: "decline" } }));
+
+      expect(res.status).toBe(409);
     });
   });
 

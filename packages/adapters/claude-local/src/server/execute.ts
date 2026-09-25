@@ -78,6 +78,7 @@ import {
   materializeRemoteClaudeConfig,
   prepareClaudeConfigSeed,
   resolveManagedClaudeRuntimeStateDir,
+  resolveClaudeMcpServerNames,
   resolveSharedClaudeConfigDir,
   writePaperclipClaudeMcpConfig,
 } from "./claude-config.js";
@@ -91,7 +92,18 @@ import {
 import { resolveClaudeDesiredSkillNames } from "./skills.js";
 import { isBedrockModelId } from "./models.js";
 import { prepareClaudePromptBundle } from "./prompt-cache.js";
-import { buildClaudeExecutionPermissionArgs, claudeSandboxPermissionEnv } from "./permissions.js";
+import {
+  buildClaudeBoardPermissionArgs,
+  buildSkillScriptAllowRules,
+  buildClaudeExecutionPermissionArgs,
+  claudeApprovalMcpToolTimeoutMs,
+  claudeSandboxPermissionEnv,
+  PAPERCLIP_PERMISSION_CONNECTION_ID,
+  PAPERCLIP_PERMISSION_TOOL,
+  parseClaudeApprovalTimeoutSec,
+  parseClaudePermissionPrompts,
+  stripBoardManagedClaudeArgs,
+} from "./permissions.js";
 import { resolveClaudeModel, SANDBOX_INSTALL_COMMAND } from "../index.js";
 import {
   createClaudeAcpExecutor,
@@ -431,7 +443,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const effort = asString(config.effort, "");
   const chrome = asBoolean(config.chrome, false);
   const maxTurns = asNumber(config.maxTurnsPerRun, 0);
-  const dangerouslySkipPermissions = asBoolean(config.dangerouslySkipPermissions, true);
+  // Board prompts replace bypass entirely: a configured skip-permissions is ignored.
+  const boardPermissionPrompts = parseClaudePermissionPrompts(config.permissionPrompts) === "board";
+  const approvalTimeoutSec = parseClaudeApprovalTimeoutSec(config.approvalTimeoutSec);
+  const dangerouslySkipPermissions = !boardPermissionPrompts
+    && asBoolean(config.dangerouslySkipPermissions, true);
   const configEnv = parseObject(config.env);
   const workspaceContext = parseObject(context.paperclipWorkspace);
   const workspaceCwd = asString(workspaceContext.cwd, "");
@@ -559,7 +575,44 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     stateDir: claudeRuntimeStateDir,
     runId,
     servers: runtimeMcpServers,
+    ruleSafeNames: boardPermissionPrompts,
   });
+  const boardPermission = (() => {
+    if (!boardPermissionPrompts) return null;
+    const names = resolveClaudeMcpServerNames(runtimeMcpServers, { ruleSafe: true });
+    const bridgeIndex = runtimeMcpServers.findIndex(
+      (server) => server.connectionId === PAPERCLIP_PERMISSION_CONNECTION_ID,
+    );
+    const networkDenied = parseLocalProcessNetworkScope(config.networkScope) === "deny";
+    return {
+      promptTool: bridgeIndex >= 0 && !networkDenied
+        ? `mcp__${names[bridgeIndex]}__${PAPERCLIP_PERMISSION_TOOL}`
+        : null,
+      // Only operator-listed skill scripts are pre-allowed. The "Paperclip projects" server can
+      // create tasks and projects, which is delegation, so it goes to the board.
+      allowRules: executionTargetIsRemote
+        ? []
+        : buildSkillScriptAllowRules({
+            scripts: Array.isArray(config.autoAllowSkillScripts)
+              ? config.autoAllowSkillScripts.filter((value): value is string => typeof value === "string")
+              : [],
+            skills: mountableSkillEntries,
+            skillsHome: path.join(promptBundle.addDir, ".claude", "skills"),
+          }),
+      networkDenied,
+    };
+  })();
+  if (boardPermission && !boardPermission.promptTool) {
+    await onLog(
+      "stderr",
+      boardPermission.networkDenied
+        ? "[paperclip] Warning: board permission prompts cannot reach Paperclip under networkScope=deny; every tool use that needs approval will be denied.\n"
+        : "[paperclip] Warning: board permission prompts are enabled but this run has no Paperclip permission bridge; every tool use that needs approval will be denied.\n",
+    );
+  }
+  if (boardPermissionPrompts) {
+    env.MCP_TOOL_TIMEOUT = String(claudeApprovalMcpToolTimeoutMs(approvalTimeoutSec));
+  }
   const localMcpConfigDir = path.dirname(localMcpConfigPath);
   const sharedClaudeConfigDir = config.managedAiConnection ? asString(configEnv.CLAUDE_CONFIG_DIR, "") : resolveSharedClaudeConfigDir(process.env);
   const networkScope = parseLocalProcessNetworkScope(config.networkScope);
@@ -880,11 +933,17 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     const args = ["--print", "--output-format", "stream-json", "--verbose"];
     if (config.managedAiConnection) args.push("--setting-sources", "user");
     if (resumeSessionId) args.push("--resume", resumeSessionId);
-    args.push(...buildClaudeExecutionPermissionArgs({
-      dangerouslySkipPermissions,
-      targetIsRemote: executionTargetIsRemote,
-      localProcessUid: process.getuid?.() ?? null,
-    }));
+    args.push(...(boardPermission
+      ? buildClaudeBoardPermissionArgs({
+        promptTool: boardPermission.promptTool,
+        allowRules: boardPermission.allowRules,
+        settingSourcesPresent: Boolean(config.managedAiConnection),
+      })
+      : buildClaudeExecutionPermissionArgs({
+        dangerouslySkipPermissions,
+        targetIsRemote: executionTargetIsRemote,
+        localProcessUid: process.getuid?.() ?? null,
+      })));
     if (chrome) args.push("--chrome");
     // For Bedrock: only pass --model when the ID is a Bedrock-native identifier
     // (e.g. "us.anthropic.*" or ARN). Anthropic-style IDs like "claude-opus-4-6" are invalid
@@ -904,7 +963,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       args.push("--mcp-config", effectiveMcpConfigPath, "--strict-mcp-config");
     }
     args.push("--add-dir", effectivePromptBundleAddDir);
-    if (extraArgs.length > 0) args.push(...extraArgs);
+    // Board mode: Claude only runs read-only commands (ls, cat...) without asking inside its
+    // working directories. Agents look through their own instructions folder on every wake,
+    // so make it one; writes there still go to the board.
+    if (boardPermission && instructionsFileDir && !executionTargetIsRemote) {
+      args.push("--add-dir", path.dirname(instructionsFilePath));
+    }
+    const effectiveExtraArgs = boardPermission ? stripBoardManagedClaudeArgs(extraArgs) : extraArgs;
+    if (effectiveExtraArgs.length > 0) args.push(...effectiveExtraArgs);
     return args;
   };
 

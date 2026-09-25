@@ -1,3 +1,4 @@
+import { CLAUDE_PERMISSION_CONNECTION_ID, CLAUDE_PERMISSION_SERVER_NAME } from "./claude-permission-bridge.js";
 import { externalConversationStateSql, nonIdleSlackIssueCondition } from "./slack-conversation-state.js";
 import { settleSlackConversation } from "./slack-conversation-lifecycle.js";
 import { publicChatTaskUrl } from "./chat-task-url.js";
@@ -24220,6 +24221,20 @@ export function heartbeatService(
             if (authToken && configuredPaperclipApiBaseUrl() && issueRef) {
               runtimeMcpServers.unshift({ name: "Paperclip projects", url: `${paperclipApiBaseUrl()}/api/mcp/project-tools`,
                 token: authToken, connectionId: "paperclip-project-tools" });
+            }
+            if (
+              authToken
+              && configuredPaperclipApiBaseUrl()
+              && agent.adapterType === "claude_local"
+              && runtimeConfig.permissionPrompts === "board"
+            ) {
+              // Claude's --permission-prompt-tool target: board approval for tool use.
+              runtimeMcpServers.unshift({
+                name: CLAUDE_PERMISSION_SERVER_NAME,
+                url: `${paperclipApiBaseUrl()}/api/mcp/claude-permissions`,
+                token: authToken,
+                connectionId: CLAUDE_PERMISSION_CONNECTION_ID,
+              });
             }
             const runtimeMcp = createAdapterRuntimeMcpAccess(runtimeMcpServers);
             if (runtimeTools && runtimeToolDelivery === "invocation_context") {

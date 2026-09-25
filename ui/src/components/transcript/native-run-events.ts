@@ -138,7 +138,8 @@ function verificationStatus(value: unknown): "passed" | "failed" | "not_run" {
   return value === "passed" || value === "failed" ? value : "not_run";
 }
 
-function runtimeRequestEntry(input: {
+/** Builds one runtime request (approval/question) entry from a runtime_request.* event. */
+export function runtimeRequestEntry(input: {
   eventType: string;
   envelope: Record<string, unknown>;
   payload: Record<string, unknown>;

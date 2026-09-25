@@ -63,6 +63,20 @@ describe("native runtime request resolution authority", () => {
     });
   });
 
+  it("accepts Claude permission bridge requests and rejects unknown sources", async () => {
+    const fromSource = (sourceKind: string) => {
+      const event = createdEvent("permission_approval");
+      event.payload.prpEvent.sourceKind = sourceKind;
+      return event;
+    };
+    await expect(
+      readPendingNativeRuntimeRequest(dbReturning(fromSource("paperclip_permission_bridge")), binding),
+    ).resolves.toMatchObject({ requestKind: "permission_approval", resolverPolicy: "instance_admin" });
+    await expect(
+      readPendingNativeRuntimeRequest(dbReturning(fromSource("agent")), binding),
+    ).resolves.toBeNull();
+  });
+
   it("treats a terminal latest event as no longer pending", async () => {
     await expect(
       readPendingNativeRuntimeRequest(dbReturning({

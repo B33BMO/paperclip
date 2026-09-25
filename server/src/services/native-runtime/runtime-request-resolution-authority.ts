@@ -64,7 +64,7 @@ function canonicalPendingRequest(input: {
     !event
     || event.schema !== "paperclip.prp.event.v1"
     || event.eventType !== "runtime_request.created"
-    || event.sourceKind !== "runner"
+    || (event.sourceKind !== "runner" && event.sourceKind !== "paperclip_permission_bridge")
     || event.runId !== input.runId
     || !request
     || request.status !== "pending"

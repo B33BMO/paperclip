@@ -154,25 +154,44 @@ export function resolveManagedClaudeRuntimeStateDir(
   return path.join(instanceRoot, "companies", companyId, "agents", agentId, "claude-runtime");
 }
 
+/**
+ * The mcpServers key for each runtime server, in order. Claude builds tool names
+ * as mcp__<key>__<tool>; with `ruleSafe` the key contains only [A-Za-z0-9_-], so
+ * permission rules and --permission-prompt-tool can name those tools exactly.
+ */
+export function resolveClaudeMcpServerNames(
+  servers: readonly AdapterRuntimeMcpServer[],
+  options: { ruleSafe?: boolean } = {},
+): string[] {
+  const clean = (value: string) => (options.ruleSafe ? value.replace(/[^A-Za-z0-9_-]/g, "_") : value);
+  const usedNames = new Set<string>();
+  return servers.map((server) => {
+    const base = clean(server.name);
+    const tag = clean(server.connectionId.slice(0, 8));
+    let name = base;
+    if (usedNames.has(name)) name = `${base}-${tag}`;
+    let suffix = 2;
+    while (usedNames.has(name)) {
+      name = `${base}-${tag}-${suffix}`;
+      suffix += 1;
+    }
+    usedNames.add(name);
+    return name;
+  });
+}
+
 export async function writePaperclipClaudeMcpConfig(input: {
   stateDir: string;
   runId: string;
   servers: AdapterRuntimeMcpServer[];
+  ruleSafeNames?: boolean;
 }): Promise<string> {
   const configDir = path.join(input.stateDir, "runs", input.runId, "mcp");
   const configPath = path.join(configDir, "mcp-config.json");
-  const usedNames = new Set<string>();
+  const names = resolveClaudeMcpServerNames(input.servers, { ruleSafe: input.ruleSafeNames });
   const mcpServers: Record<string, unknown> = {};
-  for (const server of input.servers) {
-    let name = server.name;
-    if (usedNames.has(name)) name = `${name}-${server.connectionId.slice(0, 8)}`;
-    let suffix = 2;
-    while (usedNames.has(name)) {
-      name = `${server.name}-${server.connectionId.slice(0, 8)}-${suffix}`;
-      suffix += 1;
-    }
-    usedNames.add(name);
-    mcpServers[name] = {
+  for (const [index, server] of input.servers.entries()) {
+    mcpServers[names[index]!] = {
       type: "http",
       url: server.url,
       headers: { Authorization: `Bearer ${server.token}` },

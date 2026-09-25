@@ -23,14 +23,23 @@ function isLive(status: string): boolean {
   return status === "queued" || status === "running";
 }
 
-export function useNativeRunTranscripts(runs: readonly NativeRunTranscriptSource[]) {
+const isNativeRun = (run: NativeRunTranscriptSource) => run.runtimeMode === "native";
+
+export function useNativeRunTranscripts(
+  runs: readonly NativeRunTranscriptSource[],
+  options: {
+    /** Which runs to read events for; defaults to native runs. Must be a stable function. */
+    include?: (run: NativeRunTranscriptSource) => boolean;
+  } = {},
+) {
+  const include = options.include ?? isNativeRun;
   const nativeRunsKey = runs
-    .filter((run) => run.runtimeMode === "native")
+    .filter(include)
     .map((run) => `${run.id}:${run.status}`)
     .sort()
     .join(",");
   const nativeRuns = useMemo(
-    () => runs.filter((run) => run.runtimeMode === "native").map((run) => ({ ...run })),
+    () => runs.filter(include).map((run) => ({ ...run })),
     // The key carries every field this hook consumes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [nativeRunsKey],

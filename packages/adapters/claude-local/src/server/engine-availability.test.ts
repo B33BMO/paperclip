@@ -41,4 +41,12 @@ describe("claude engine availability", () => {
     expect(result.engine).toBe("acp");
     expect(result.unavailableReason).toContain("not available");
   });
+
+  it("rejects board permission prompts on the ACP engine and allows them on CLI", async () => {
+    const acp = await resolveClaudeExecutionEngineForRun({ config: { permissionPrompts: "board" } } as never);
+    expect(acp.engine).toBe("acp");
+    expect(acp.unavailableReason).toContain("engine=cli");
+    await expect(resolveClaudeExecutionEngineForRun({ config: { engine: "cli", permissionPrompts: "board" } } as never))
+      .resolves.toEqual({ engine: "cli", explicit: true });
+  });
 });

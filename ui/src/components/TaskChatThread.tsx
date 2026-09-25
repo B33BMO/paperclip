@@ -117,6 +117,8 @@ import { queryKeys } from "@/lib/queryKeys";
 import { useQueryClient } from "@tanstack/react-query";
 import { TaskChatPresentationProvider } from "@/components/task-chat/presentation-mode";
 
+const includeEveryRun = () => true;
+
 function toMs(value: Date | string | null | undefined): number {
   if (!value) return 0;
   const ms = new Date(value).getTime();
@@ -894,6 +896,20 @@ export function TaskChatThread(props: TaskChatThreadProps) {
     hydratedRunIds: hydratedNativeRunIds,
     retry: retryNativeEvents,
   } = useNativeRunTranscripts(nativeRuns);
+  // Legacy Claude runs pause on board permission prompts, which the server
+  // records as runtime_request events. Read those events for live runs so the
+  // same approve/deny card appears; the rest of their transcript stays log-based.
+  const permissionPromptRuns = useMemo(
+    () => runs.filter((run) =>
+      run.runtimeMode !== "native"
+      && run.adapterType === "claude_local"
+      && (run.status === "queued" || run.status === "running")),
+    [runs],
+  );
+  const { transcriptByRun: permissionTranscriptByRun } = useNativeRunTranscripts(
+    permissionPromptRuns,
+    { include: includeEveryRun },
+  );
   const fallbackByRunRef = useRef(
     new Map<string, NonNullable<ReturnType<typeof logTranscriptByRun.get>>>(),
   );
@@ -925,12 +941,21 @@ export function TaskChatThread(props: TaskChatThreadProps) {
       if (!nativeRuns.some((run) => run.id === id))
         fallbackByRunRef.current.delete(id);
     }
+    for (const [runId, entries] of permissionTranscriptByRun) {
+      const requests = entries.filter((entry) => entry.kind === "runtime_request");
+      if (requests.length === 0) continue;
+      next.set(
+        runId,
+        [...(next.get(runId) ?? []), ...requests].sort((a, b) => toMs(a.ts) - toMs(b.ts)),
+      );
+    }
     return next;
   }, [
     logTranscriptByRun,
     nativeRuns,
     nativeTranscriptByRun,
     nativeTranscriptErrorsByRun,
+    permissionTranscriptByRun,
   ]);
 
   // The single in-flight run whose turn we stream live (non-terminal).

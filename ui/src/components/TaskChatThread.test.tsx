@@ -30,6 +30,8 @@ const nativeTranscriptState = vi.hoisted(() => ({
 const transcriptHookRuns = vi.hoisted(() => ({
   legacy: [] as unknown[][],
   native: [] as unknown[][],
+  // Calls that pass an `include` filter: legacy Claude runs read for permission prompts.
+  permission: [] as unknown[][],
 }));
 const sidebarState = vi.hoisted(() => ({ isMobile: false }));
 const planState = vi.hoisted(() => ({ data: null as IssueDocument | null }));
@@ -54,8 +56,8 @@ vi.mock("@/components/transcript/useLiveRunTranscripts", () => ({
   },
 }));
 vi.mock("@/components/transcript/useNativeRunTranscripts", () => ({
-  useNativeRunTranscripts: (runs: unknown[]) => {
-    transcriptHookRuns.native.push(runs);
+  useNativeRunTranscripts: (runs: unknown[], options?: { include?: unknown }) => {
+    (options?.include ? transcriptHookRuns.permission : transcriptHookRuns.native).push(runs);
     return {
       transcriptByRun: new Map(nativeTranscriptState.transcriptByRun),
       errorsByRun: new Map(nativeTranscriptState.errorsByRun),
@@ -116,6 +118,7 @@ beforeEach(() => {
   nativeTranscriptState.hydratedRunIds = undefined;
   transcriptHookRuns.legacy.length = 0;
   transcriptHookRuns.native.length = 0;
+  transcriptHookRuns.permission.length = 0;
   sidebarState.isMobile = false;
   planState.data = null;
   streamlinedState.enabled = true;
@@ -3642,6 +3645,70 @@ describe("TaskChatThread live transcript", () => {
     ]) {
       expect(container.textContent).not.toContain(noise);
     }
+  });
+
+  it("shows a legacy Claude run's board permission prompt and resolves it once", async () => {
+    nativeTranscriptState.transcriptByRun.set("run-claude", [
+      {
+        kind: "runtime_request",
+        ts: "2026-09-25T17:00:00.000Z",
+        requestId: "perm-1",
+        requestKind: "permission_approval",
+        turnId: "claude:run-claude",
+        requestType: "permission",
+        status: "pending",
+        prompt: "Claude wants to run Bash\n{\n  \"command\": \"dcdiag /q\"\n}",
+        choices: [
+          { key: "accept", label: "Allow once" },
+          { key: "decline", label: "Deny" },
+        ],
+        fields: [],
+      },
+    ]);
+    const resolveRuntimeRequest = vi
+      .spyOn(heartbeatsApi, "resolveRuntimeRequest")
+      .mockResolvedValue({} as never);
+
+    render(
+      <TaskChatThread
+        comments={[]}
+        onAdd={async () => {}}
+        issueStatus="in_progress"
+        activeRun={{
+          id: "run-claude",
+          status: "running",
+          invocationSource: "issue",
+          triggerDetail: null,
+          startedAt: "2026-09-25T17:00:00.000Z",
+          finishedAt: null,
+          createdAt: "2026-09-25T17:00:00.000Z",
+          agentId: "agent-1",
+          agentName: "Infrastructure Engineer",
+          adapterType: "claude_local",
+        }}
+      />,
+    );
+
+    // The legacy run is read for its permission events, not treated as native.
+    expect(transcriptHookRuns.permission.some((runs) =>
+      (runs as Array<{ id: string }>).some((run) => run.id === "run-claude"))).toBe(true);
+    const input = container.querySelector('[data-testid="task-chat-runtime-request-input"]');
+    expect(input?.textContent).toContain("dcdiag /q");
+    const buttons = Array.from(container.querySelectorAll("button")).map((b) => b.textContent?.trim());
+    expect(buttons).toContain("Allow once");
+    expect(buttons).toContain("Deny");
+    expect(buttons.some((label) => /session|always/i.test(label ?? ""))).toBe(false);
+
+    const allow = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "Allow once",
+    );
+    await act(async () => allow?.click());
+    expect(resolveRuntimeRequest).toHaveBeenCalledWith(expect.objectContaining({
+      runId: "run-claude",
+      requestId: "perm-1",
+      requestKind: "permission_approval",
+      resolution: { action: "accept" },
+    }));
   });
 
   it.each([false, true])("resolves canonical input with stale adapter metadata (saved card: %s)", async (hasSavedCard) => {

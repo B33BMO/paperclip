@@ -144,6 +144,7 @@ import {
   readPendingNativeRuntimeRequest,
   type NativeRuntimeRequestResolver,
 } from "../services/native-runtime/runtime-request-resolution-authority.js";
+import { resolveClaudePermissionRequest } from "../services/claude-permission-bridge.js";
 import {
   NativeRuntimeRequestResolutionError,
   resolveNativeRuntimeRequest,
@@ -6846,7 +6847,11 @@ export function agentRoutes(
         "Heartbeat run not found",
       );
       if (!existing) return;
-      if (existing.runtimeMode !== "native" || existing.status !== "running") {
+      const isClaudePermissionRun = existing.runtimeMode === "legacy";
+      if (
+        (existing.runtimeMode !== "native" && !isClaudePermissionRun)
+        || existing.status !== "running"
+      ) {
         throw conflict(
           "This runner session is no longer accepting runtime responses.",
         );
@@ -6884,6 +6889,42 @@ export function agentRoutes(
           );
         }
         throw error;
+      }
+      if (isClaudePermissionRun) {
+        // Claude permission bridge: the waiting tool call is the consumer, so
+        // only a one-shot allow or deny is meaningful here.
+        const action = req.body?.resolution?.action;
+        if (pendingRequest.requestKind !== "permission_approval") {
+          throw conflict("This runtime request is stale or is no longer pending.");
+        }
+        if (action !== "accept" && action !== "decline") {
+          throw badRequest("Only Allow once or Deny can answer a Claude permission request.");
+        }
+        const applied = await resolveClaudePermissionRequest(db, {
+          run: existing,
+          requestId,
+          action,
+          resolvedByUserId: resolutionActor.userId,
+        });
+        if (!applied) {
+          throw conflict("This runtime request is stale or is no longer pending.");
+        }
+        await logActivity(db, {
+          companyId: existing.companyId,
+          actorType: "user",
+          actorId: req.actor.userId ?? "board",
+          action: "heartbeat.permission_request_resolved",
+          entityType: "heartbeat_run",
+          entityId: existing.id,
+          details: {
+            requestId,
+            requestKind: pendingRequest.requestKind,
+            resolvedByUserId: resolutionActor.userId,
+            action,
+          },
+        });
+        res.status(202).json({ accepted: true });
+        return;
       }
       // Kind and turn are read only from the server-persisted PRP event. Body
       // values are deliberately ignored so a caller cannot downgrade an

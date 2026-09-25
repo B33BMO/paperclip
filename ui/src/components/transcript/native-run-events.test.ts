@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { HeartbeatRunEvent } from "@paperclipai/shared";
-import { nativeRunEventsToTranscript } from "./native-run-events";
+import { nativeRunEventsToTranscript, runtimeRequestEntry } from "./native-run-events";
 
 const RUN_ID = "10000000-0000-4000-8000-000000000001";
 
@@ -868,6 +868,68 @@ describe("nativeRunEventsToTranscript", () => {
       malformed,
       event(3, "extension.unknown", { explanation: "not a transcript row" }),
     ])).toEqual([]);
+  });
+
+  it("projects a Claude permission bridge request with only its own choices", () => {
+    const created = event(1, "runtime_request.created", {
+      request: {
+        schema: "paperclip.runtime_request.v1",
+        requestId: "perm-1",
+        requestKind: "permission_approval",
+        type: "permission",
+        status: "pending",
+        turnId: `claude:${RUN_ID}`,
+        prompt: "Bash\n{\n  \"command\": \"dcdiag /q\"\n}",
+        choices: [
+          { key: "accept", label: "Allow once" },
+          { key: "decline", label: "Deny" },
+        ],
+      },
+    });
+    (created.payload!.prpEvent as Record<string, unknown>).sourceKind = "paperclip_permission_bridge";
+    const resolved = event(2, "runtime_request.resolved", {
+      request: { requestId: "perm-1", status: "resolved", action: "decline" },
+    });
+    (resolved.payload!.prpEvent as Record<string, unknown>).sourceKind = "paperclip_permission_bridge";
+
+    expect(nativeRunEventsToTranscript([created, resolved])).toEqual([
+      expect.objectContaining({
+        kind: "runtime_request",
+        requestId: "perm-1",
+        requestKind: "permission_approval",
+        requestType: "permission",
+        status: "pending",
+        prompt: expect.stringContaining("dcdiag /q"),
+        choices: [
+          { key: "accept", label: "Allow once" },
+          { key: "decline", label: "Deny" },
+        ],
+      }),
+      expect.objectContaining({ kind: "runtime_request", requestId: "perm-1", status: "cancelled" }),
+    ]);
+  });
+
+  it("exports the runtime request entry builder", () => {
+    expect(runtimeRequestEntry({
+      eventType: "runtime_request.created",
+      envelope: {},
+      payload: {
+        request: {
+          requestId: "perm-2",
+          requestKind: "permission_approval",
+          status: "pending",
+          prompt: "Write",
+          choices: [{ key: "accept", label: "Allow once" }],
+        },
+      },
+      ts: "2026-09-25T00:00:00.000Z",
+    })).toEqual(expect.objectContaining({
+      kind: "runtime_request",
+      requestId: "perm-2",
+      requestKind: "permission_approval",
+      requestType: "permission",
+      status: "pending",
+    }));
   });
 
   it("projects structured questions through resolution without losing identity", () => {

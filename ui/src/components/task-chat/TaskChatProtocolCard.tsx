@@ -767,15 +767,29 @@ function RuntimeRequestCard({
     );
   }
 
+  // Permission prompts carry the exact tool input under a one-line heading; show
+  // that input verbatim so the reviewer approves what will actually run.
+  const promptBreak = item.requestType === "permission" ? (item.prompt ?? "").indexOf("\n") : -1;
+  const promptSummary = promptBreak >= 0 ? item.prompt!.slice(0, promptBreak) : item.prompt;
+  const promptDetail = promptBreak >= 0 ? item.prompt!.slice(promptBreak + 1).trim() : "";
+
   return (
     <CardShell
       icon={ShieldCheck}
       title={title}
       status={item.status}
-      summary={item.prompt}
+      summary={promptSummary ?? undefined}
       testId="task-chat-runtime-request"
       presentation={presentation}
     >
+      {promptDetail ? (
+        <pre
+          className="mb-3 max-h-(--sz-64) overflow-auto whitespace-pre-wrap rounded-sm bg-muted/50 p-2 font-mono text-xs text-foreground"
+          data-testid="task-chat-runtime-request-input"
+        >
+          {promptDetail}
+        </pre>
+      ) : null}
       {item.requestType === "input" &&
       item.status === "pending" &&
       item.questionSet ? (

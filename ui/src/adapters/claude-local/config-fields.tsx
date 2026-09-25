@@ -87,6 +87,9 @@ export function ClaudeLocalAdvancedFields({
     : eff("adapterConfig", "engine", String(config.engine ?? "auto"));
   const engine = rawEngine === "acp" || rawEngine === "cli" ? rawEngine : "auto";
   const acpSelected = engine === "acp";
+  // Board permission prompts are edit-only: new agents start with the default and can switch after creation.
+  const boardPrompts = !isCreate
+    && eff("adapterConfig", "permissionPrompts", String(config.permissionPrompts ?? "off")) === "board";
 
   return configFieldsForSection(section, (
     <>
@@ -242,24 +245,59 @@ export function ClaudeLocalAdvancedFields({
             : mark("adapterConfig", "chrome", v)
         }
       />
-      <ToggleField
-        label="Skip permissions"
-        hint={help.dangerouslySkipPermissions}
-        checked={
-          isCreate
-            ? values!.dangerouslySkipPermissions
-            : eff(
-                "adapterConfig",
-                "dangerouslySkipPermissions",
-                config.dangerouslySkipPermissions !== false,
-              )
-        }
-        onChange={(v) =>
-          isCreate
-            ? set!({ dangerouslySkipPermissions: v })
-            : mark("adapterConfig", "dangerouslySkipPermissions", v)
-        }
-      />
+      {!isCreate && (
+        <Field
+          label="Permission prompts"
+          hint="Ask the board: Claude asks before every command, file write, connection tool, and file read outside its workspace. Each request is an Allow once / Deny card on the task and the run waits for your decision. Requires the Claude CLI engine."
+        >
+          <select
+            className={inputClass}
+            value={boardPrompts ? "board" : "off"}
+            onChange={(e) =>
+              mark("adapterConfig", "permissionPrompts", e.target.value === "board" ? "board" : undefined)}
+          >
+            <option value="off">Off</option>
+            <option value="board">Ask the board</option>
+          </select>
+        </Field>
+      )}
+      {boardPrompts && (
+        <Field
+          label="Approval timeout (seconds)"
+          hint="How long a permission request waits for a decision before it is denied. 60 to 10800; defaults to 1800."
+        >
+          <DraftNumberInput
+            value={eff("adapterConfig", "approvalTimeoutSec", Number(config.approvalTimeoutSec ?? 1800))}
+            onCommit={(v) => mark("adapterConfig", "approvalTimeoutSec", v || undefined)}
+            immediate
+            className={inputClass}
+          />
+        </Field>
+      )}
+      {boardPrompts ? (
+        <p className="text-xs text-muted-foreground">
+          Skip permissions is off while the board answers permission prompts.
+        </p>
+      ) : (
+        <ToggleField
+          label="Skip permissions"
+          hint={help.dangerouslySkipPermissions}
+          checked={
+            isCreate
+              ? values!.dangerouslySkipPermissions
+              : eff(
+                  "adapterConfig",
+                  "dangerouslySkipPermissions",
+                  config.dangerouslySkipPermissions !== false,
+                )
+          }
+          onChange={(v) =>
+            isCreate
+              ? set!({ dangerouslySkipPermissions: v })
+              : mark("adapterConfig", "dangerouslySkipPermissions", v)
+          }
+        />
+      )}
       <Field label="Max turns per run" hint={help.maxTurnsPerRun}>
         {isCreate ? (
           <input
