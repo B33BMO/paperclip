@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "slug": "claude-kb",
+  "name": "Claude KB",
+  "description": "Search your local knowledgebase, knowledge graph, and past session history.",
+  "categories": [
+    "ai"
+  ],
+  "branding": {
+    "logoUrl": "/brands/apps/claude-kb.svg"
+  },
+  "urlPatterns": [
+    "http://127.0.0.1:7457/*",
+    "http://localhost:7457/*"
+  ],
+  "methods": [
+    {
+      "key": "mcp-api-key",
+      "transport": "mcp_remote",
+      "auth": "api_key",
+      "ownershipModes": [
+        "customer"
+      ],
+      "whenToUse": "Connect the Claude KB server running on this Paperclip host.",
+      "defaults": {
+        "serverUrl": "http://127.0.0.1:7457/mcp"
+      },
+      "guidanceMd": "Run `ckb serve` on the Paperclip host, or enable the `ckb` systemd user unit so it starts with your session. Print the bearer token with `ckb serve --print-token` and paste it below.",
+      "riskTier": "S3",
+      "label": "Use a local token",
+      "credentialFields": [
+        {
+          "key": "authorization",
+          "label": "Claude KB token",
+          "type": "password",
+          "required": true,
+          "placeholder": "Paste the token from ckb serve --print-token",
+          "secret": true
+        }
+      ],
+      "keyPlacement": {
+        "location": "header",
+        "name": "Authorization",
+        "prefix": "Bearer "
+      },
+      "warnings": [
+        "Claude KB listens on loopback (127.0.0.1) only. It works for agents running on this host, not for remote sandboxes such as Daytona, and not on publicly exposed authenticated deployments.",
+        "kb_note saves durable notes into the shared knowledgebase; every other tool is read-only."
+      ]
+    }
+  ]
+}

@@ -201,7 +201,7 @@ describe("Connectors landing page", () => {
   });
 
   it("hides cached memory connectors until enabled and preserves saved MCP connections", async () => {
-    const providers = ["mem0", "zep", "supermemory", "cognee", "honcho"];
+    const providers = ["mem0", "zep", "supermemory", "cognee", "honcho", "claude-kb"];
     listGalleryMock.mockResolvedValue({ apps: [...providers, "notion"].map(getAppStoreDefinition) });
     const client = await renderBrowse();
     for (const slug of providers) expect(container.querySelector(`[data-app-slug="${slug}"]`)).toBeNull();
@@ -216,7 +216,7 @@ describe("Connectors landing page", () => {
     });
     await flushReact();
     expect(container.textContent).toContain("Mem0");
-    for (const slug of ["zep", "supermemory", "cognee", "honcho"]) expect(container.querySelector(`[data-app-slug="${slug}"]`)).toBeNull();
+    for (const slug of ["zep", "supermemory", "cognee", "honcho", "claude-kb"]) expect(container.querySelector(`[data-app-slug="${slug}"]`)).toBeNull();
   });
 
   it("shows all MCP aggregators by default and ignores cached legacy opt-outs", async () => {

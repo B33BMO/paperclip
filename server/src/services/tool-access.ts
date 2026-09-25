@@ -2319,6 +2319,12 @@ const SHOPIFY_DESTRUCTIVE_TOOLS = new Set([
   "complete-checkout",
 ]);
 
+// Exact reviewed Claude KB read tools. kb_note and any unknown tool stay writes.
+const CLAUDE_KB_READ_TOOLS = new Set([
+  "kb_search", "kb_ask", "kb_show", "kb_entity", "kb_path", "kb_entities", "kb_stats",
+  "sessions_find", "sessions_recent", "sessions_notes",
+]);
+
 function normalizedProviderToolName(toolName: string): string {
   return toolName
     .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
@@ -2348,6 +2354,11 @@ export function classifyRisk(
     if (verbMatches(tool.name, "delete|remove|destroy|forget|prune|reset")) return "destructive";
     // Supermemory uses one add_memory tool for both save and forget.
     if (sourceTemplateKey === "supermemory" && normalizedToolName === "add-memory") return "destructive";
+    // Claude KB publishes reviewed read tools whose names carry no read verb.
+    if (sourceTemplateKey === "claude-kb") {
+      if (annotations.readOnlyHint === false || annotations.writeHint === true) return "write";
+      return CLAUDE_KB_READ_TOOLS.has(tool.name) ? "read" : "write";
+    }
     if (verbMatches(tool.name, "add|remember|save|record|ingest|cognify|update|create|set|upload|select|rename|share")) return "write";
     if (annotations.readOnlyHint === false || annotations.writeHint === true) return "write";
     const reads = ["get", "list", "search", "recall", "query", "retrieve", "who"];

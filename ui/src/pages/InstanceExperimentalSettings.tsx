@@ -434,7 +434,7 @@ export function InstanceExperimentalSettings() {
 
         <ExperimentalToggleCard
           title="Memory connectors"
-          description="Connect Mem0, Zep, Supermemory, Cognee, and Honcho for long-term memory and context."
+          description="Connect Mem0, Zep, Supermemory, Cognee, Honcho, and Claude KB for long-term memory and context."
           footnote="Turning this off hides setup for these connectors. Existing connections keep running."
           checked={experimentalQuery.data?.enableMemoryConnectors === true}
           onCheckedChange={(checked) => toggleMutation.mutate({ enableMemoryConnectors: checked })}

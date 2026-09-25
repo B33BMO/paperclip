@@ -10,8 +10,14 @@ describe("memory tool governance", () => {
     ["supermemory", "get_profile", "read"], ["cognee", "remember", "write"],
     ["cognee", "recall", "read"], ["cognee", "forget", "destructive"],
     ["honcho", "create_peer", "write"], ["honcho", "future_unknown_action", "write"],
+    ["claude-kb", "kb_search", "read"], ["claude-kb", "sessions_recent", "read"],
+    ["claude-kb", "kb_note", "write"], ["claude-kb", "kb_forget", "destructive"],
+    ["claude-kb", "future_unknown_action", "write"],
   ])("classifies %s %s even with a misleading read hint", (provider, name, expected) => {
     expect(classifyRisk({ name, annotations: { readOnlyHint: true } }, provider)).toBe(expected);
+  });
+  it("honors a Claude KB write hint on a reviewed read tool", () => {
+    expect(classifyRisk({ name: "kb_show", annotations: { readOnlyHint: false } }, "claude-kb")).toBe("write");
   });
   it("keeps the approved Cognee bridge free of runtime package resolution", () => {
     expect(COGNEE_STDIO_TEMPLATE.command).toBeNull();

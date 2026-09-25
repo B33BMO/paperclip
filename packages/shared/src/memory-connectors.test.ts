@@ -25,6 +25,7 @@ describe("experimental memory connectors", () => {
     expect(method("honcho")).toMatchObject({ auth: "api_key", defaults: { serverUrl: "https://mcp.honcho.dev" }, keyPlacement: { location: "header", name: "Authorization", prefix: "Bearer " } });
     expect(method("zep")).toMatchObject({ auth: "oauth", grantKinds: ["user"], ownershipModes: ["dcr"], defaults: { serverUrl: "https://api.getzep.com/mcp", scopesHint: ["graph:read", "graph:write"] } });
     expect(method("supermemory")).toMatchObject({ auth: "oauth", grantKinds: ["user"], defaults: { serverUrl: "https://mcp.supermemory.ai/mcp" } });
+    expect(method("claude-kb")).toMatchObject({ auth: "api_key", defaults: { serverUrl: "http://127.0.0.1:7457/mcp" }, keyPlacement: { location: "header", name: "Authorization", prefix: "Bearer " } });
     const cognee = method("cognee");
     expect(cognee.defaults).toEqual({ templateKey: "paperclip.cognee-cloud" });
     expect(cognee.credentialFields!.map(field => credentialConfigPath(field, cognee))).toEqual(["env.COGNEE_BASE_URL", "env.COGNEE_API_KEY"]);

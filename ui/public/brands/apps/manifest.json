@@ -515,6 +515,12 @@
       "provider": "Zep",
       "catalogVisible": true,
       "localAsset": "/brands/apps/zep.png"
+    },
+    {
+      "slug": "claude-kb",
+      "provider": "Claude KB",
+      "catalogVisible": true,
+      "localAsset": "/brands/apps/claude-kb.svg"
     }
   ]
 }

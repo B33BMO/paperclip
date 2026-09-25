@@ -1424,6 +1424,27 @@ apps.push({
     })],
 });
 
+// Claude KB is an operator-run knowledgebase MCP server on the Paperclip host.
+// It listens on loopback only, so it has no public docs or console links and
+// relies on the local-development policy that permits private remote endpoints.
+apps.push({
+  schemaVersion: 1, slug: "claude-kb", name: "Claude KB",
+  description: "Search your local knowledgebase, knowledge graph, and past session history.",
+  categories: ["ai"], branding: brandingFor("claude-kb"),
+  urlPatterns: ["http://127.0.0.1:7457/*", "http://localhost:7457/*"],
+  methods: [method("mcp-api-key", "mcp_remote", "api_key", { serverUrl: "http://127.0.0.1:7457/mcp" }, "S3",
+    "Run `ckb serve` on the Paperclip host, or enable the `ckb` systemd user unit so it starts with your session. Print the bearer token with `ckb serve --print-token` and paste it below.", {
+      label: "Use a local token",
+      whenToUse: "Connect the Claude KB server running on this Paperclip host.",
+      credentialFields: [field("authorization", "Claude KB token", "Paste the token from ckb serve --print-token")],
+      keyPlacement: { location: "header", name: "Authorization", prefix: "Bearer " },
+      warnings: [
+        "Claude KB listens on loopback (127.0.0.1) only. It works for agents running on this host, not for remote sandboxes such as Daytona, and not on publicly exposed authenticated deployments.",
+        "kb_note saves durable notes into the shared knowledgebase; every other tool is read-only.",
+      ],
+    })],
+});
+
 for (const entry of researchManifest.entries) {
   const existing = apps.find((app) => app.slug === entry.slug);
   if (entry.status === "blocked") {

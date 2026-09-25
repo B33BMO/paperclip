@@ -11589,7 +11589,7 @@ describeEmbeddedPostgres("tool access service", () => {
     );
   });
 
-  it.each(["mem0", "zep", "supermemory", "cognee", "honcho"])("rejects %s setup before creating credentials when memory connectors are disabled", async (provider) => {
+  it.each(["mem0", "zep", "supermemory", "cognee", "honcho", "claude-kb"])("rejects %s setup before creating credentials when memory connectors are disabled", async (provider) => {
     const company = await createCompany(db);
     const service = createTestToolAccessService(db);
     await instanceSettingsService(db).updateExperimental({ enableMemoryConnectors: false });
