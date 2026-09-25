@@ -47,7 +47,7 @@ describe("Claude board permission prompts", () => {
     ]));
     const settings = JSON.parse(args[args.indexOf("--settings") + 1]!);
     expect(settings).toEqual({
-      permissions: { ask: [...BOARD_ASK_RULES], allow: ["mcp__Paperclip_projects"] },
+      permissions: { ask: [...BOARD_ASK_RULES], allow: ["Skill", "mcp__Paperclip_projects"] },
     });
   });
 

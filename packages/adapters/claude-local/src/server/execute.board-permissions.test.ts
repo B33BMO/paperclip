@@ -111,7 +111,7 @@ describe("claude_local board permission prompts", () => {
       "Write", "Edit", "Read(//**)",
     ]));
     // Nothing is pre-allowed: task/project creation is delegation and needs the board too.
-    expect(settings.permissions.allow).toEqual([]);
+    expect(settings.permissions.allow).toEqual(["Skill"]);
     expect(env.MCP_TOOL_TIMEOUT).toBe(String((900 + 120) * 1000));
   });
 

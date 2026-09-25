@@ -119,7 +119,8 @@ export function buildClaudeBoardPermissionArgs(input: {
   settingSourcesPresent?: boolean;
 }): string[] {
   const settings = {
-    permissions: { ask: [...BOARD_ASK_RULES], allow: [...input.allowRules] },
+    // Opening a skill only loads its instructions; the commands it leads to are gated as usual.
+    permissions: { ask: [...BOARD_ASK_RULES], allow: ["Skill", ...input.allowRules] },
   };
   const args = ["--permission-mode", "default"];
   // A workspace .claude/settings*.json is writable by the agent; never let it pre-allow tools.
