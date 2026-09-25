@@ -81,6 +81,10 @@ export function resolveTelemetryConfig(
     return { enabled: false, ...caps };
   }
 
-  const endpoint = process.env.PAPERCLIP_TELEMETRY_ENDPOINT || undefined;
+  // Local fork: telemetry is opt-in. Without an explicit endpoint it stays off.
+  const endpoint = process.env.PAPERCLIP_TELEMETRY_ENDPOINT?.trim() || undefined;
+  if (!endpoint) {
+    return { enabled: false, ...caps };
+  }
   return { enabled: true, endpoint, ...caps };
 }

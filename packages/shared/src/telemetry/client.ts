@@ -11,10 +11,9 @@ import type {
 import { type ResolvedTelemetryCaps, resolveCaps } from "./config.js";
 import { PAPERCLIP_EVENTS } from "./generated/paperclip-telemetry.js";
 
-const DEFAULT_ENDPOINTS = [
-  "https://telemetry.paperclip.ing/ingest",
-  "https://rusqrrg391.execute-api.us-east-1.amazonaws.com/ingest",
-] as const;
+// Local fork: no built-in telemetry endpoints. Events are only sent when an
+// operator sets PAPERCLIP_TELEMETRY_ENDPOINT explicitly.
+const DEFAULT_ENDPOINTS: readonly string[] = [];
 // Queue-pressure valve: auto-flush once this many events are buffered. This is
 // an in-memory backpressure trigger, independent of the wire caps that
 // `chunkForSend` enforces on each POST.
