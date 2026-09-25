@@ -46,12 +46,12 @@
   },
   "dependencies": {
     "zod": "^4.4.3",
-    "three": "0.185.1"
+    "three": "0.186.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "typescript": "^7.0.2",
-    "@types/three": "0.185.4"
+    "@types/three": "0.186.0"
   },
   "engines": {
     "node": ">=24.11.0"
