@@ -17,8 +17,21 @@
   <a href="https://www.star-history.com/paperclipai/paperclip"><img src="https://api.star-history.com/badge?repo=paperclipai/paperclip" alt="Star History Rank" /></a>
   <a href="https://discord.gg/m4HZY7xNG3"><img src="https://img.shields.io/badge/discord-join-7289da" alt="Discord" /></a>
 </p>
+<img width="300" height="300" alt="icon" src="https://github.com/user-attachments/assets/c42e19c7-7219-4395-b057-38941a2ea1f9" />
 
-<br/>
+<br/><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- tinker: a lowercase t and the spinner's ✻ spark, on the signal-amber tile -->
+  <rect width="64" height="64" rx="15" fill="#ffb224"/>
+  <rect y="56" width="64" height="8" rx="4" fill="#000" fill-opacity=".09"/>
+  <path d="M22 13h10v26c0 5 3 7 8 7h3v9h-5c-11 0-16-6-16-16Z" fill="#1b1204"/>
+  <rect x="14" y="22" width="27" height="9" rx="2" fill="#1b1204"/>
+  <g fill="#1b1204">
+    <rect x="46.4" y="7" width="3.2" height="17" rx="1.6"/>
+    <rect x="46.4" y="7" width="3.2" height="17" rx="1.6" transform="rotate(60 48 15.5)"/>
+    <rect x="46.4" y="7" width="3.2" height="17" rx="1.6" transform="rotate(120 48 15.5)"/>
+  </g>
+</svg>
+
 
 <div align="center">
   <video src="https://github.com/user-attachments/assets/773bdfb2-6d1e-4e30-8c5f-3487d5b70c8f" width="600" controls></video>
